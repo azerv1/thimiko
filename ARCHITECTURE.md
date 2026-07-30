@@ -1,7 +1,7 @@
 # Architecture
 
-thimiko normalizes local Codex, Claude Code, and GitHub Copilot chat history into one canonical
-model, indexes it for full-text search, and serves it to a human or an LLM
+thimiko normalizes local Codex, Claude Code, GitHub Copilot, and Gemini CLI chat history into one
+canonical model, indexes it for full-text search, and serves it to a human or an LLM
 (via MCP). The pipeline is layered as four small interfaces; everything above
 a layer depends only on that layer's ABC, never on a concrete implementation.
 Each layer can be extended or swapped without touching the others.
@@ -12,6 +12,7 @@ Each layer can be extended or swapped without touching the others.
  CodexSource                Turn                    SqliteStore
  ClaudeSource
  CopilotSource
+ GeminiSource
                                   |
                                   v
                           indexing (pipeline)
@@ -31,7 +32,7 @@ Each layer can be extended or swapped without touching the others.
 
 ## Data flow
 
-1. A `ChatSource` recognizes and parses one provider's JSONL file into a
+1. A `ChatSource` recognizes and parses one provider's session file into a
    `Session` of ordered `Event`s (Phase 1/2).
 2. `indexing.chunking.documents_for_session()` groups a session's events into
    `Turn`s, keeps only searchable `Message`s, and chunks long turns into
@@ -51,6 +52,7 @@ Each layer can be extended or swapped without touching the others.
 ```python
 class ChatSource(ABC):
     name: str
+
     def default_roots(self) -> list[Path]: ...
     def discover(self, root: Path) -> list[Path]: ...  # defaults to *.jsonl
     def matches(self, path: Path) -> bool: ...
@@ -70,7 +72,8 @@ Discovery is **per-source**: `iter_session_files()` asks each source to
 recursive `*.jsonl`; a provider stored differently overrides it (e.g.
 `CopilotSource` globs VSCode's mixed `.json`/`.jsonl` `chatSessions/`). Concrete
 sources today: `CodexSource`, `ClaudeSource`, `CopilotSource` (GitHub Copilot /
-VSCode chat — reconstructs its base-snapshot + JSON-patch `.jsonl` log).
+VSCode chat), and `GeminiSource` (legacy JSON snapshots plus current append-only
+JSONL sessions, including checkpoints and rewinds).
 
 ### `Store` (`src/thimiko/storage/base.py`)
 
@@ -140,8 +143,8 @@ blocks are kept in source order, and each `tool_result` links back to its
 
 ## Interfaces (`cli.py`, `mcp.py`)
 
-`cli.py` is a plain `argparse` CLI: `build`, `update`, `search`, `mcp`
-(bare `thimiko` also launches `mcp`). It constructs a `SqliteStore` and either
+`cli.py` is a plain `argparse` CLI: `build`, `update`, `search`, `mcp`.
+Bare `thimiko` prints help; `thimiko mcp` starts the server. It constructs a `SqliteStore` and either
 an `Indexer` or a `KeywordRetriever` — the only two places in the codebase
 that reference `SqliteStore` by name.
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "thimiko"
 version = "0.1.0"
-description = "Layered, searchable memory over local Codex and Claude Code chat histories"
+description = "Searchable memory over local AI coding chat histories"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Aster" }]

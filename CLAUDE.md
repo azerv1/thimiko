@@ -1,7 +1,7 @@
 # thimiko — agent guide
 
-Layered, searchable memory over local Codex and Claude Code chat history. See
-`ARCHITECTURE.md` for the layer/interface design before changing structure.
+Layered, searchable memory over local Codex, Claude Code, GitHub Copilot, and Gemini CLI chat
+history. See `ARCHITECTURE.md` for the layer/interface design before changing structure.
 
 ## Commands
 
@@ -10,14 +10,14 @@ uv sync                          # create .venv + uv.lock
 uv run thimiko build              # full rebuild of the index (default: %LOCALAPPDATA%\thimiko\thimiko.sqlite)
 uv run thimiko update [--prune]   # incremental: only changed/new files; --prune drops deleted files' sessions
 uv run thimiko search "query"     # BM25 ranked search; JSON by default (--text for humans, --days N for recency)
-uv run thimiko mcp                # launch the MCP server over stdio (also the bare `thimiko` default)
+uv run thimiko mcp                # launch the MCP server over stdio
 ```
 
 `--db PATH` overrides the index location on any subcommand.
 
 ## Invariants (don't break these)
 
-- Never merge the two providers' raw schemas — normalize into the canonical
+- Never merge providers' raw schemas — normalize into the canonical
   `Session`/`Event` model only. See `ARCHITECTURE.md`.
 - Every `Event` carries a `Provenance` (source file + line). Never lose that
   link — it's how `get_turn`/`get_session` point back to the raw record.
@@ -50,7 +50,7 @@ uv run thimiko mcp                # launch the MCP server over stdio (also the b
 ## Where things live
 
 - `src/thimiko/models/` — OOP domain model (`Session`, `Turn`, `Event` + subclasses).
-- `src/thimiko/sources/` — pluggable ingestion adapters (`CodexSource`, `ClaudeSource`, `CopilotSource`).
+- `src/thimiko/sources/` — pluggable ingestion adapters (`CodexSource`, `ClaudeSource`, `CopilotSource`, `GeminiSource`).
 - `src/thimiko/storage/` — pluggable persistence (`SqliteStore`).
 - `src/thimiko/indexing/` — chunking + `Indexer` (build/update).
 - `src/thimiko/search/` — pluggable retrieval (`KeywordRetriever`).

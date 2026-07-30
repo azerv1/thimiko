@@ -13,3 +13,7 @@ def test_bare_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_mcp_remains_explicit() -> None:
     assert parse_args(["mcp"]).command == "mcp"
+
+
+def test_search_accepts_gemini_source() -> None:
+    assert parse_args(["search", "migration", "--source", "gemini"]).source == "gemini"

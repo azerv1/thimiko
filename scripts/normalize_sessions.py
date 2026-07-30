@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export Codex and Claude histories as canonical chat-search JSONL."""
+"""Export supported chat histories as canonical chat-search JSONL."""
 
 from __future__ import annotations
 
@@ -25,16 +25,16 @@ def iter_records(session: Session) -> Iterable[dict[str, Any]]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Normalize Codex and Claude session JSONL for retrieval and indexing."
+        description="Normalize supported chat sessions for retrieval and indexing."
     )
     parser.add_argument(
         "paths",
         nargs="*",
-        help="JSONL files or directories. Defaults to both history roots.",
+        help="Session files or directories. Defaults to all registered history roots.",
     )
     parser.add_argument(
         "--source",
-        choices=("auto", "codex", "claude"),
+        choices=("auto", "codex", "claude", "copilot", "gemini"),
         default="auto",
         help="Force a source dialect instead of detecting each file.",
     )
@@ -75,8 +75,7 @@ def main() -> int:
 
     print(f"Wrote canonical JSONL: {args.out}")
     print(
-        f"Sessions: {session_count}; events: {event_count}; "
-        f"searchable events: {searchable_count}."
+        f"Sessions: {session_count}; events: {event_count}; searchable events: {searchable_count}."
     )
     return 0
 

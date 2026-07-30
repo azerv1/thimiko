@@ -62,7 +62,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "paths", nargs="*", help="Files/directories; defaults to all registered sources' roots"
     )
     build_parser.add_argument(
-        "--source", choices=("auto", "codex", "claude", "copilot"), default="auto"
+        "--source", choices=("auto", "codex", "claude", "copilot", "gemini"), default="auto"
     )
 
     update_parser = subparsers.add_parser("update", help="Incrementally update an existing index")
@@ -70,7 +70,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "paths", nargs="*", help="Files/directories; defaults to all registered sources' roots"
     )
     update_parser.add_argument(
-        "--source", choices=("auto", "codex", "claude", "copilot"), default="auto"
+        "--source", choices=("auto", "codex", "claude", "copilot", "gemini"), default="auto"
     )
     update_parser.add_argument(
         "--prune", action="store_true", help="Remove sessions whose source file no longer exists"
@@ -78,7 +78,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     search_parser = subparsers.add_parser("search", help="Search indexed turn documents")
     search_parser.add_argument("query")
-    search_parser.add_argument("--source", choices=("codex", "claude", "copilot"))
+    search_parser.add_argument("--source", choices=("codex", "claude", "copilot", "gemini"))
     search_parser.add_argument("--limit", type=int, default=10)
     search_parser.add_argument(
         "--days", type=int, default=None, help="Only turns from the last N days"

@@ -13,8 +13,9 @@ from .base import ChatSource
 from .claude import ClaudeSource
 from .codex import CodexSource
 from .copilot import CopilotSource
+from .gemini import GeminiSource
 
-_REGISTRY: list[ChatSource] = [CodexSource(), ClaudeSource(), CopilotSource()]
+_REGISTRY: list[ChatSource] = [CodexSource(), ClaudeSource(), CopilotSource(), GeminiSource()]
 
 
 def register(source: ChatSource) -> None:
@@ -74,6 +75,7 @@ __all__ = [
     "ClaudeSource",
     "CodexSource",
     "CopilotSource",
+    "GeminiSource",
     "all_sources",
     "default_roots",
     "detect",

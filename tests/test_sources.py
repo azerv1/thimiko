@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from thimiko.models import Message
+from thimiko.sources import detect
 from thimiko.sources.claude import ClaudeSource
 from thimiko.sources.codex import CodexSource
 from thimiko.sources.copilot import CopilotSource
+from thimiko.sources.gemini import GeminiSource
 
 
 def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
@@ -360,3 +362,185 @@ def test_copilot_discovers_chat_sessions_tree(tmp_path: Path) -> None:
 
     found = CopilotSource().discover(tmp_path)
     assert found == sorted([sessions / "a.json", sessions / "b.jsonl"])
+
+
+def test_gemini_parses_legacy_json_with_thoughts_and_tools(tmp_path: Path) -> None:
+    project = tmp_path / "project-hash"
+    chats = project / "chats"
+    chats.mkdir(parents=True)
+    (project / ".project_root").write_text("C:/repo\n", encoding="utf-8")
+    snapshot = {
+        "sessionId": "gs1",
+        "projectHash": "project-hash",
+        "startTime": "2026-07-01T10:00:00Z",
+        "lastUpdated": "2026-07-01T10:00:03Z",
+        "summary": "DNS repair",
+        "messages": [
+            {
+                "id": "user-1",
+                "timestamp": "2026-07-01T10:00:01Z",
+                "type": "user",
+                "content": [{"text": "why does the dns import fail?"}],
+            },
+            {
+                "id": "gemini-1",
+                "timestamp": "2026-07-01T10:00:02Z",
+                "type": "gemini",
+                "model": "gemini-test",
+                "content": [{"text": "Install dnspython."}],
+                "thoughts": [
+                    {
+                        "subject": "Dependency",
+                        "description": "The module is not installed.",
+                        "timestamp": "2026-07-01T10:00:01Z",
+                    }
+                ],
+                "toolCalls": [
+                    {
+                        "id": "tool-1",
+                        "name": "run_shell_command",
+                        "args": {"command": "pip install dnspython"},
+                        "result": [{"text": "installed"}],
+                        "status": "success",
+                        "timestamp": "2026-07-01T10:00:02Z",
+                    }
+                ],
+            },
+            {
+                "id": "info-1",
+                "timestamp": "2026-07-01T10:00:03Z",
+                "type": "info",
+                "content": "session restored",
+            },
+        ],
+    }
+    path = chats / "session-gs1.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    session = GeminiSource().parse(path)
+
+    assert session.id == "gemini:gs1"
+    assert session.source == "gemini"
+    assert session.model == "gemini-test"
+    assert session.title == "DNS repair"
+    assert session.cwd == "C:/repo"
+    assert [event.kind for event in session.events] == [
+        "message",
+        "reasoning",
+        "tool_call",
+        "tool_result",
+        "message",
+        "message",
+    ]
+    assert session.events[3].parent_id == session.events[2].id
+    assert sum(event.searchable for event in session.events) == 2
+    assert all(event.turn_id == "gemini:gs1:turn:user-1" for event in session.events)
+
+
+def test_gemini_reconstructs_jsonl_checkpoint_and_rewind(tmp_path: Path) -> None:
+    user_1 = {
+        "id": "user-1",
+        "timestamp": "2026-07-02T10:00:01Z",
+        "type": "user",
+        "content": "explain the migration",
+    }
+    gemini_1 = {
+        "id": "gemini-1",
+        "timestamp": "2026-07-02T10:00:02Z",
+        "type": "gemini",
+        "content": "The migration copies rows.",
+    }
+    user_2 = {
+        "id": "user-2",
+        "timestamp": "2026-07-02T10:00:03Z",
+        "type": "user",
+        "content": "delete this branch",
+    }
+    gemini_2 = {
+        "id": "gemini-2",
+        "timestamp": "2026-07-02T10:00:04Z",
+        "type": "gemini",
+        "content": "This answer is rewound.",
+    }
+    records: list[dict[str, Any]] = [
+        {
+            "sessionId": "gs2",
+            "projectHash": "hash-2",
+            "startTime": "2026-07-02T10:00:00Z",
+            "lastUpdated": "2026-07-02T10:00:00Z",
+        },
+        user_1,
+        gemini_1,
+        {
+            "$set": {
+                "messages": [user_1, gemini_1, user_2, gemini_2],
+                "summary": "Migration notes",
+                "lastUpdated": "2026-07-02T10:00:05Z",
+            }
+        },
+        {"$rewindTo": "user-2"},
+    ]
+    path = tmp_path / "session-gs2.jsonl"
+    write_jsonl(path, records)
+
+    session = GeminiSource().parse(path)
+
+    assert session.id == "gemini:gs2"
+    assert session.title == "Migration notes"
+    assert session.ended_at == "2026-07-02T10:00:05Z"
+    assert [message.text for message in session.searchable_messages()] == [
+        "explain the migration",
+        "The migration copies rows.",
+    ]
+    assert all(event.provenance.line == 4 for event in session.events)
+
+
+def test_gemini_matches_discovers_and_namespaces_subagents(tmp_path: Path) -> None:
+    chats = tmp_path / "hash" / "chats"
+    subagents = chats / "parent-session"
+    subagents.mkdir(parents=True)
+    main_path = chats / "session-main.json"
+    main_path.write_text(
+        json.dumps(
+            {
+                "sessionId": "main",
+                "projectHash": "hash",
+                "startTime": "2026-07-03T10:00:00Z",
+                "messages": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    subagent_path = subagents / "agent-1.jsonl"
+    write_jsonl(
+        subagent_path,
+        [
+            {
+                "sessionId": "agent-1",
+                "projectHash": "hash",
+                "startTime": "2026-07-03T10:00:00Z",
+                "kind": "subagent",
+            },
+            {
+                "id": "gemini-1",
+                "timestamp": "2026-07-03T10:00:01Z",
+                "type": "gemini",
+                "content": "subagent result",
+            },
+        ],
+    )
+    (tmp_path / "stray.json").write_text("{}", encoding="utf-8")
+
+    source = GeminiSource()
+    assert source.discover(tmp_path) == sorted([main_path, subagent_path])
+    assert source.matches(main_path) is True
+    assert source.matches(subagent_path) is True
+    detected = detect(main_path)
+    assert detected is not None
+    assert detected.name == "gemini"
+
+    session = source.parse(subagent_path)
+    assert session.id == "gemini:parent-session:agent:agent-1"
+    assert session.parent_session_id == "gemini:parent-session"
+    assert session.agent_id == "agent-1"
+    assert session.events[0].turn_id == f"{session.id}:turn:fallback-1"
