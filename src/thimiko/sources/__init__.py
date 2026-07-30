@@ -9,13 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from thimiko.utils import discover_jsonl_files
-
 from .base import ChatSource
 from .claude import ClaudeSource
 from .codex import CodexSource
+from .copilot import CopilotSource
 
-_REGISTRY: list[ChatSource] = [CodexSource(), ClaudeSource()]
+_REGISTRY: list[ChatSource] = [CodexSource(), ClaudeSource(), CopilotSource()]
 
 
 def register(source: ChatSource) -> None:
@@ -46,14 +45,21 @@ def default_roots() -> list[Path]:
 
 
 def iter_session_files(paths: list[Path] | None = None) -> list[Path]:
-    """Discover JSONL session files under `paths`, or all default roots when omitted."""
-    search_paths = paths if paths else default_roots()
-    files: list[Path] = []
-    for path in search_paths:
-        if not path.exists():
-            continue
-        files.extend(discover_jsonl_files(path))
-    return files
+    """Discover session files under `paths`, or every source's default roots.
+
+    Each source discovers its own files (see `ChatSource.discover`), so providers
+    that don't store plain `*.jsonl` are found too. Per-file routing still goes
+    through `detect()`, so overlapping globs are deduped harmlessly.
+    """
+    if paths:
+        roots = [(source, path) for source in _REGISTRY for path in paths]
+    else:
+        roots = [(source, root) for source in _REGISTRY for root in source.default_roots()]
+    files: set[Path] = set()
+    for source, root in roots:
+        if root.exists():
+            files.update(source.discover(root))
+    return sorted(files)
 
 
 def resolve_input_paths(paths: list[str]) -> list[Path]:
@@ -67,6 +73,7 @@ __all__ = [
     "ChatSource",
     "ClaudeSource",
     "CodexSource",
+    "CopilotSource",
     "all_sources",
     "default_roots",
     "detect",

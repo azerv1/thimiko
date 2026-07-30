@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,18 @@ def discover_jsonl_files(path: Path) -> list[Path]:
     if path.is_dir():
         return sorted(p for p in path.rglob("*.jsonl") if p.is_file())
     raise FileNotFoundError(f"Path does not exist: {path}")
+
+
+def iso_from_epoch_ms(value: Any) -> str | None:
+    """Render an epoch-milliseconds timestamp as a UTC `…Z` string.
+
+    Millisecond precision matches the stored ISO timestamps from the JSONL
+    providers, so values compare lexicographically as a time order.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    moment = datetime.fromtimestamp(value / 1000, tz=UTC)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
 
 
 def as_string(value: Any) -> str:

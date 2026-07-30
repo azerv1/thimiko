@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from thimiko.models import Message
 from thimiko.sources.claude import ClaudeSource
 from thimiko.sources.codex import CodexSource
+from thimiko.sources.copilot import CopilotSource
 
 
 def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
@@ -245,3 +247,116 @@ def test_claude_namespaces_subagent_stream_below_parent_session(tmp_path: Path) 
     turn_id = session.events[0].turn_id
     assert turn_id is not None
     assert turn_id.startswith(session.id)
+
+
+def _copilot_request(
+    request_id: str, user_text: str, response: list[dict[str, Any]]
+) -> dict[str, Any]:
+    return {
+        "requestId": request_id,
+        "timestamp": 1781883475448,
+        "modelId": "copilot/auto",
+        "message": {"text": user_text},
+        "response": response,
+    }
+
+
+def test_copilot_parses_json_snapshot_and_orders_events(tmp_path: Path) -> None:
+    snapshot = {
+        "version": 3,
+        "sessionId": "cs1",
+        "responderUsername": "GitHub Copilot",
+        "creationDate": 1781883470000,
+        "lastMessageDate": 1781883480000,
+        "requests": [
+            _copilot_request(
+                "req1",
+                "how do I fix the dns import error?",
+                [
+                    {"kind": "thinking", "value": "the dns module is missing"},
+                    {"value": "Run pip install dnspython to fix it."},
+                    {
+                        "kind": "toolInvocationSerialized",
+                        "toolName": "run_in_terminal",
+                        "invocationMessage": "Running pip install",
+                    },
+                ],
+            )
+        ],
+    }
+    path = tmp_path / "cs1.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    session = CopilotSource().parse(path)
+
+    assert session.id == "copilot:cs1"
+    assert session.source == "copilot"
+    assert session.model == "copilot/auto"
+    assert session.started_at is not None and session.started_at.endswith("Z")
+    assert [event.kind for event in session.events] == [
+        "message",
+        "reasoning",
+        "tool_call",
+        "message",
+    ]
+    assert sum(event.searchable for event in session.events) == 2
+    assistant = session.events[-1]
+    assert isinstance(assistant, Message)
+    assert assistant.text == "Run pip install dnspython to fix it."
+    assert all(event.turn_id == "copilot:cs1:turn:req1" for event in session.events)
+
+
+def test_copilot_reconstructs_jsonl_base_plus_patches(tmp_path: Path) -> None:
+    base = {
+        "version": 3,
+        "sessionId": "cs2",
+        "responderUsername": "GitHub Copilot",
+        "creationDate": 1781883470000,
+        "requests": [
+            _copilot_request(
+                "req1",
+                "explain the flag enum",
+                [{"kind": "thinking", "value": "flags use powers of two"}],
+            )
+        ],
+    }
+    records: list[dict[str, Any]] = [
+        {"kind": 0, "v": base},
+        {"kind": 1, "k": ["requests", 0, "response", 1], "v": {"value": "Each member is a bit."}},
+        {"kind": 1, "k": ["customTitle"], "v": "Flag enum"},
+        {"kind": 2, "v": None},
+    ]
+    path = tmp_path / "cs2.jsonl"
+    write_jsonl(path, records)
+    session = CopilotSource().parse(path)
+
+    assert session.id == "copilot:cs2"
+    assert session.title == "Flag enum"
+    assistant = session.events[-1]
+    assert isinstance(assistant, Message)
+    assert assistant.text == "Each member is a bit."
+    assert session.searchable_messages()[-1].text == "Each member is a bit."
+
+
+def test_copilot_matches_own_files_and_rejects_claude(tmp_path: Path) -> None:
+    copilot = tmp_path / "cs.json"
+    copilot.write_text(
+        json.dumps({"sessionId": "cs", "requests": [], "responderUsername": "GitHub Copilot"}),
+        encoding="utf-8",
+    )
+    claude = tmp_path / "claude.jsonl"
+    write_jsonl(claude, [{"type": "user", "uuid": "u1", "message": {"role": "user"}}])
+
+    source = CopilotSource()
+    assert source.matches(copilot) is True
+    assert source.matches(claude) is False
+
+
+def test_copilot_discovers_chat_sessions_tree(tmp_path: Path) -> None:
+    sessions = tmp_path / "workspaceStorage" / "abc123" / "chatSessions"
+    sessions.mkdir(parents=True)
+    (sessions / "a.json").write_text("{}", encoding="utf-8")
+    (sessions / "b.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "stray.json").write_text("{}", encoding="utf-8")
+
+    found = CopilotSource().discover(tmp_path)
+    assert found == sorted([sessions / "a.json", sessions / "b.jsonl"])

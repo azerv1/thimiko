@@ -1,6 +1,6 @@
 # Architecture
 
-thimiko normalizes local Codex and Claude Code chat history into one canonical
+thimiko normalizes local Codex, Claude Code, and GitHub Copilot chat history into one canonical
 model, indexes it for full-text search, and serves it to a human or an LLM
 (via MCP). The pipeline is layered as four small interfaces; everything above
 a layer depends only on that layer's ABC, never on a concrete implementation.
@@ -11,6 +11,7 @@ Each layer can be extended or swapped without touching the others.
  ChatSource ABC        ->   Session / Event    ->   Store ABC
  CodexSource                Turn                    SqliteStore
  ClaudeSource
+ CopilotSource
                                   |
                                   v
                           indexing (pipeline)
@@ -51,6 +52,7 @@ Each layer can be extended or swapped without touching the others.
 class ChatSource(ABC):
     name: str
     def default_roots(self) -> list[Path]: ...
+    def discover(self, root: Path) -> list[Path]: ...  # defaults to *.jsonl
     def matches(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> Session: ...
 ```
@@ -62,6 +64,13 @@ the shared `sources/_parsing.py` helpers and `sources/_builder.py`'s
 once. `Indexer`, the CLI, and the MCP server all pick it up automatically
 through `all_sources()` / `detect()` / `iter_session_files()` — nothing else
 changes.
+
+Discovery is **per-source**: `iter_session_files()` asks each source to
+`discover()` its own files under its roots. The default `discover()` does
+recursive `*.jsonl`; a provider stored differently overrides it (e.g.
+`CopilotSource` globs VSCode's mixed `.json`/`.jsonl` `chatSessions/`). Concrete
+sources today: `CodexSource`, `ClaudeSource`, `CopilotSource` (GitHub Copilot /
+VSCode chat — reconstructs its base-snapshot + JSON-patch `.jsonl` log).
 
 ### `Store` (`src/thimiko/storage/base.py`)
 

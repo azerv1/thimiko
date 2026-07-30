@@ -50,7 +50,7 @@ uv run thimiko mcp                # launch the MCP server over stdio (also the b
 ## Where things live
 
 - `src/thimiko/models/` — OOP domain model (`Session`, `Turn`, `Event` + subclasses).
-- `src/thimiko/sources/` — pluggable ingestion adapters (`CodexSource`, `ClaudeSource`).
+- `src/thimiko/sources/` — pluggable ingestion adapters (`CodexSource`, `ClaudeSource`, `CopilotSource`).
 - `src/thimiko/storage/` — pluggable persistence (`SqliteStore`).
 - `src/thimiko/indexing/` — chunking + `Indexer` (build/update).
 - `src/thimiko/search/` — pluggable retrieval (`KeywordRetriever`).

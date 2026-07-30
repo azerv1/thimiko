@@ -1,6 +1,6 @@
 """Command-line entry point: build | update | search | mcp.
 
-Bare `thimiko` with no subcommand launches the MCP server over stdio.
+Bare `thimiko` prints help. The MCP server only starts through `thimiko mcp`.
 """
 
 from __future__ import annotations
@@ -61,20 +61,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     build_parser.add_argument(
         "paths", nargs="*", help="Files/directories; defaults to all registered sources' roots"
     )
-    build_parser.add_argument("--source", choices=("auto", "codex", "claude"), default="auto")
+    build_parser.add_argument(
+        "--source", choices=("auto", "codex", "claude", "copilot"), default="auto"
+    )
 
     update_parser = subparsers.add_parser("update", help="Incrementally update an existing index")
     update_parser.add_argument(
         "paths", nargs="*", help="Files/directories; defaults to all registered sources' roots"
     )
-    update_parser.add_argument("--source", choices=("auto", "codex", "claude"), default="auto")
+    update_parser.add_argument(
+        "--source", choices=("auto", "codex", "claude", "copilot"), default="auto"
+    )
     update_parser.add_argument(
         "--prune", action="store_true", help="Remove sessions whose source file no longer exists"
     )
 
     search_parser = subparsers.add_parser("search", help="Search indexed turn documents")
     search_parser.add_argument("query")
-    search_parser.add_argument("--source", choices=("codex", "claude"))
+    search_parser.add_argument("--source", choices=("codex", "claude", "copilot"))
     search_parser.add_argument("--limit", type=int, default=10)
     search_parser.add_argument(
         "--days", type=int, default=None, help="Only turns from the last N days"
@@ -90,12 +94,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     args = parser.parse_args(argv)
     if args.command is None:
-        args.command = "mcp"
+        parser.print_help()
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.command is None:
+        return 0
+
     db_path = Path(args.db)
 
     if args.command == "mcp":
