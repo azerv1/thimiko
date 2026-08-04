@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from thimiko.models import Session
+from thimiko.utils import discover_jsonl_files
 
 
 class ChatSource(ABC):
@@ -21,6 +22,15 @@ class ChatSource(ABC):
     def default_roots(self) -> list[Path]:
         """Default directories to scan for this source's session files."""
 
+    def discover(self, root: Path) -> list[Path]:
+        """Session files under `root` for this source.
+
+        Defaults to recursive `*.jsonl` discovery; override for providers whose
+        history is stored elsewhere or in another shape (e.g. VSCode's mixed
+        `.json`/`.jsonl` chat sessions).
+        """
+        return discover_jsonl_files(root)
+
     @abstractmethod
     def matches(self, path: Path) -> bool:
         """Whether `path` looks like a session file written by this source."""
@@ -28,3 +38,12 @@ class ChatSource(ABC):
     @abstractmethod
     def parse(self, path: Path) -> Session:
         """Normalize one session file into the canonical domain model."""
+
+    def parse_all(self, path: Path) -> list[Session]:
+        """Every session stored in `path`.
+
+        One file is one session for the JSONL providers; override for a store
+        that holds many conversations in a single file (e.g. Cursor's SQLite
+        `state.vscdb`).
+        """
+        return [self.parse(path)]

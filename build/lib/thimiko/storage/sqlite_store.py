@@ -20,7 +20,7 @@ from thimiko.models import Session
 
 from .base import Store
 
-SCHEMA_VERSION = "thimiko/v1"
+SCHEMA_VERSION = "thimiko/v2"
 
 _DROP_SQL = """
 DROP TABLE IF EXISTS documents_fts;
@@ -107,11 +107,12 @@ CREATE TABLE IF NOT EXISTS embeddings (
     PRIMARY KEY (document_id, model)
 );
 
+-- `session_ids` is a JSON array: one file can hold many sessions (Cursor).
 CREATE TABLE IF NOT EXISTS indexed_files (
     path TEXT PRIMARY KEY,
     mtime REAL NOT NULL,
     size INTEGER NOT NULL,
-    session_id TEXT NOT NULL,
+    session_ids TEXT NOT NULL,
     indexed_at TEXT NOT NULL
 );
 """
@@ -153,7 +154,7 @@ class SqliteStore(Store):
         self._connection.row_factory = sqlite3.Row
 
     def create_schema(self, *, reset: bool) -> None:
-        if reset:
+        if reset or self._stale_schema():
             self._connection.executescript(_DROP_SQL)
         self._connection.executescript(_SCHEMA_SQL)
         self._connection.execute(
@@ -161,6 +162,20 @@ class SqliteStore(Store):
             ("schema_version", SCHEMA_VERSION),
         )
         self._connection.commit()
+
+    def _stale_schema(self) -> bool:
+        """Whether an existing index predates `SCHEMA_VERSION` and must be rebuilt.
+
+        The index is a derived cache, so a version bump drops and recreates it
+        rather than migrating; the next `build`/`update` refills it.
+        """
+        try:
+            row = self._connection.execute(
+                "SELECT value FROM metadata WHERE key = 'schema_version'"
+            ).fetchone()
+        except sqlite3.DatabaseError:
+            return False
+        return row is not None and str(row["value"]) != SCHEMA_VERSION
 
     def upsert_session(self, session: Session, documents: list[SearchDocument]) -> None:
         header = session.header()
@@ -217,10 +232,10 @@ class SqliteStore(Store):
         ).fetchone()
         return (row["mtime"], row["size"]) if row else None
 
-    def record_file(self, path: str, mtime: float, size: int, session_id: str) -> None:
+    def record_file(self, path: str, mtime: float, size: int, session_ids: list[str]) -> None:
         self._connection.execute(
             "INSERT OR REPLACE INTO indexed_files VALUES (?, ?, ?, ?, ?)",
-            (path, mtime, size, session_id, datetime.now(UTC).isoformat()),
+            (path, mtime, size, json.dumps(session_ids), datetime.now(UTC).isoformat()),
         )
         self._connection.commit()
 
@@ -228,9 +243,15 @@ class SqliteStore(Store):
         self._connection.execute("DELETE FROM indexed_files WHERE path = ?", (path,))
         self._connection.commit()
 
-    def known_files(self) -> dict[str, str]:
-        rows = self._connection.execute("SELECT path, session_id FROM indexed_files").fetchall()
-        return {str(row["path"]): str(row["session_id"]) for row in rows}
+    def known_files(self) -> dict[str, list[str]]:
+        rows = self._connection.execute("SELECT path, session_ids FROM indexed_files").fetchall()
+        return {str(row["path"]): list(json.loads(row["session_ids"])) for row in rows}
+
+    def session_counts(self) -> dict[str, int]:
+        rows = self._connection.execute(
+            "SELECT source, COUNT(*) AS n FROM sessions GROUP BY source"
+        ).fetchall()
+        return {str(row["source"]): int(row["n"]) for row in rows}
 
     def search(
         self,

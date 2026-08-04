@@ -1,6 +1,6 @@
 # Architecture
 
-thimiko normalizes local Codex, Claude Code, GitHub Copilot, and Gemini CLI chat history into one
+thimiko normalizes local Codex, Claude Code, GitHub Copilot, Gemini CLI, and Cursor chat history into one
 canonical model, indexes it for full-text search, and serves it to a human or an LLM
 (via MCP). The pipeline is layered as four small interfaces; everything above
 a layer depends only on that layer's ABC, never on a concrete implementation.
@@ -13,6 +13,7 @@ Each layer can be extended or swapped without touching the others.
  ClaudeSource
  CopilotSource
  GeminiSource
+ CursorSource
                                   |
                                   v
                           indexing (pipeline)
@@ -57,6 +58,7 @@ class ChatSource(ABC):
     def discover(self, root: Path) -> list[Path]: ...  # defaults to *.jsonl
     def matches(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> Session: ...
+    def parse_all(self, path: Path) -> list[Session]: ...  # defaults to [parse(path)]
 ```
 
 **To add a new chat-history provider** ("agy history" or anything else):
@@ -72,8 +74,18 @@ Discovery is **per-source**: `iter_session_files()` asks each source to
 recursive `*.jsonl`; a provider stored differently overrides it (e.g.
 `CopilotSource` globs VSCode's mixed `.json`/`.jsonl` `chatSessions/`). Concrete
 sources today: `CodexSource`, `ClaudeSource`, `CopilotSource` (GitHub Copilot /
-VSCode chat), and `GeminiSource` (legacy JSON snapshots plus current append-only
-JSONL sessions, including checkpoints and rewinds).
+VSCode chat), `GeminiSource` (legacy JSON snapshots plus current append-only
+JSONL sessions, including checkpoints and rewinds), and `CursorSource`.
+
+`parse_all()` exists because one file is not always one session. Every JSONL
+provider inherits the default (`[self.parse(path)]`), but Cursor stores every
+chat as rows in a single SQLite database —
+`globalStorage/state.vscdb`, table `cursorDiskKV`, keyed
+`composerData:<id>` (chat metadata + message order) and
+`bubbleId:<composerId>:<bubbleId>` (message bodies) — so `CursorSource`
+overrides it and returns one `Session` per composer. `Provenance.line` is the
+`cursorDiskKV` rowid and `native_id` the full key, so the link back to the raw
+record survives the change of medium.
 
 ### `Store` (`src/thimiko/storage/base.py`)
 
@@ -85,7 +97,14 @@ Persistence backend for sessions and their search documents: `create_schema`,
 **Current implementation**: `SqliteStore` — stdlib `sqlite3` + FTS5. Schema:
 `sessions`, `documents`, `documents_fts` (FTS5 virtual table over `documents`),
 `embeddings` (reserved, unused — see below), `indexed_files` (path -> mtime/
-size/session_id, drives `update`), `metadata`.
+size/session_ids, drives `update`), `metadata`.
+
+`indexed_files.session_ids` is a JSON array, not a single id, because a Cursor
+`state.vscdb` maps to many sessions; `record_file`/`known_files` take and return
+lists. The index is a derived cache, so `create_schema` drops and recreates
+everything when the stored `metadata.schema_version` predates `SCHEMA_VERSION`
+(currently `thimiko/v2`) rather than migrating in place — the next
+`build`/`update` refills it.
 
 FTS5 is kept in sync with `documents` by three triggers (`documents_ai`,
 `documents_ad`, `documents_au`) rather than a bulk reindex step. This means

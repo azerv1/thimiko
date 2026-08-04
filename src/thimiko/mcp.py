@@ -24,7 +24,7 @@ from thimiko.search import KeywordRetriever
 from thimiko.storage import SqliteStore
 
 _INSTRUCTIONS = (
-    "Search local Codex, Claude Code, GitHub Copilot, and Gemini CLI chat history. "
+    "Search local Codex, Claude Code, GitHub Copilot, Gemini CLI, and Cursor chat history. "
     "Call search_chats with a "
     "focused query first; it returns ranked snippets with session_id/turn_id and "
     "provenance (source file + line). Use get_turn to expand a promising hit into "
@@ -43,7 +43,9 @@ def create_server(db_path: Path) -> MCPServer:
         source: Annotated[
             str | None,
             Field(
-                description=("Restrict to 'codex', 'claude', 'copilot', or 'gemini'; omit for all.")
+                description=(
+                    "Restrict to 'codex', 'claude', 'copilot', 'gemini', or 'cursor'; omit for all."
+                )
             ),
         ] = None,
         limit: Annotated[int, Field(ge=1, le=100, description="Maximum results to return.")] = 10,

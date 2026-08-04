@@ -44,7 +44,7 @@ class Indexer:
         files = iter_session_files(paths or None)
         if not files:
             joined = ", ".join(str(path) for path in paths) if paths else "default roots"
-            raise FileNotFoundError(f"No chat JSONL files found under: {joined}")
+            raise FileNotFoundError(f"No chat history files found under: {joined}")
 
         self.store.create_schema(reset=True)
         session_count = 0
@@ -53,13 +53,16 @@ class Indexer:
             source = self._detect(file_path, forced_source)
             if source is None:
                 continue
-            session = source.parse(file_path)
-            documents = documents_for_session(session)
-            self.store.upsert_session(session, documents)
+            sessions = source.parse_all(file_path)
+            for session in sessions:
+                documents = documents_for_session(session)
+                self.store.upsert_session(session, documents)
+                document_count += len(documents)
             stat = file_path.stat()
-            self.store.record_file(str(file_path), stat.st_mtime, stat.st_size, session.id)
-            session_count += 1
-            document_count += len(documents)
+            self.store.record_file(
+                str(file_path), stat.st_mtime, stat.st_size, [s.id for s in sessions]
+            )
+            session_count += len(sessions)
         return BuildResult(sessions=session_count, documents=document_count)
 
     def update(
@@ -89,24 +92,26 @@ class Indexer:
             source = self._detect(file_path, forced_source)
             if source is None:
                 continue
-            session = source.parse(file_path)
-            documents = documents_for_session(session)
+            sessions = source.parse_all(file_path)
 
-            prior_session_id = known.get(path_key)
-            if prior_session_id:
-                self.store.delete_session(prior_session_id)
+            prior_session_ids = known.get(path_key)
+            if prior_session_ids:
+                for prior_session_id in prior_session_ids:
+                    self.store.delete_session(prior_session_id)
                 updated += 1
             else:
                 added += 1
 
-            self.store.upsert_session(session, documents)
-            self.store.record_file(path_key, stat.st_mtime, stat.st_size, session.id)
+            for session in sessions:
+                self.store.upsert_session(session, documents_for_session(session))
+            self.store.record_file(path_key, stat.st_mtime, stat.st_size, [s.id for s in sessions])
 
         pruned = 0
         if prune:
-            for path_key, session_id in known.items():
+            for path_key, session_ids in known.items():
                 if path_key not in seen_paths and not Path(path_key).exists():
-                    self.store.delete_session(session_id)
+                    for session_id in session_ids:
+                        self.store.delete_session(session_id)
                     self.store.forget_file(path_key)
                     pruned += 1
 

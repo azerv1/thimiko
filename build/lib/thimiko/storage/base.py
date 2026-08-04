@@ -34,16 +34,23 @@ class Store(ABC):
         """Return the (mtime, size) this store last indexed `path` at, if any."""
 
     @abstractmethod
-    def record_file(self, path: str, mtime: float, size: int, session_id: str) -> None:
-        """Remember that `path` was indexed as `session_id` at (mtime, size)."""
+    def record_file(self, path: str, mtime: float, size: int, session_ids: list[str]) -> None:
+        """Remember that `path` was indexed as `session_ids` at (mtime, size).
+
+        A file usually holds one session; Cursor's `state.vscdb` holds many.
+        """
 
     @abstractmethod
     def forget_file(self, path: str) -> None:
         """Remove `path` from the incremental-update index (for pruning)."""
 
     @abstractmethod
-    def known_files(self) -> dict[str, str]:
-        """Map of indexed file path -> session_id, for pruning deleted files."""
+    def known_files(self) -> dict[str, list[str]]:
+        """Map of indexed file path -> its session ids, for pruning deleted files."""
+
+    @abstractmethod
+    def session_counts(self) -> dict[str, int]:
+        """Number of indexed sessions per source name."""
 
     @abstractmethod
     def search(

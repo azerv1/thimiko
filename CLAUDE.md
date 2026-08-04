@@ -1,6 +1,6 @@
 # thimiko — agent guide
 
-Layered, searchable memory over local Codex, Claude Code, GitHub Copilot, and Gemini CLI chat
+Layered, searchable memory over local Codex, Claude Code, GitHub Copilot, Gemini CLI, and Cursor chat
 history. See `ARCHITECTURE.md` for the layer/interface design before changing structure.
 
 ## Commands
@@ -51,7 +51,7 @@ uv run thimiko mcp                # launch the MCP server over stdio
 ## Where things live
 
 - `src/thimiko/models/` — OOP domain model (`Session`, `Turn`, `Event` + subclasses).
-- `src/thimiko/sources/` — pluggable ingestion adapters (`CodexSource`, `ClaudeSource`, `CopilotSource`, `GeminiSource`).
+- `src/thimiko/sources/` — pluggable ingestion adapters (`CodexSource`, `ClaudeSource`, `CopilotSource`, `GeminiSource`, `CursorSource`).
 - `src/thimiko/storage/` — pluggable persistence (`SqliteStore`).
 - `src/thimiko/indexing/` — chunking + `Indexer` (build/update).
 - `src/thimiko/search/` — pluggable retrieval (`KeywordRetriever`).

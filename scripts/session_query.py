@@ -514,9 +514,7 @@ def write_markdown(
             [match.line, match.timestamp, match.role, match.source, match.snippet]
             for match in session.matches[:max_matches]
         ]
-        lines.append(
-            markdown_table(["Line", "Timestamp", "Role", "Source", "Snippet"], match_rows)
-        )
+        lines.append(markdown_table(["Line", "Timestamp", "Role", "Source", "Snippet"], match_rows))
         if len(session.matches) > max_matches:
             lines.append(f"_Hidden matches in this session: {len(session.matches) - max_matches}_")
             lines.append("")

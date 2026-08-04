@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -160,5 +161,75 @@ def test_update_adds_new_file(tmp_path: Path) -> None:
 
         hits = KeywordRetriever(store).search("second answer", limit=5)
         assert len(hits) == 1
+    finally:
+        store.close()
+
+
+def _write_cursor_db(path: Path, rows: dict[str, Any]) -> None:
+    """A Cursor-shaped `cursorDiskKV` database: one file holding many sessions."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT)")
+        connection.executemany(
+            "INSERT INTO cursorDiskKV VALUES (?, ?)",
+            [(key, json.dumps(value)) for key, value in rows.items()],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _cursor_chat(composer_id: str, bubble_id: str, text: str) -> dict[str, Any]:
+    return {
+        f"composerData:{composer_id}": {
+            "name": f"chat {composer_id}",
+            "createdAt": 1767225600000,
+            "fullConversationHeadersOnly": [{"bubbleId": bubble_id, "type": 1}],
+        },
+        f"bubbleId:{composer_id}:{bubble_id}": {"type": 1, "text": text},
+    }
+
+
+def test_build_indexes_every_session_in_a_multi_session_file(tmp_path: Path) -> None:
+    path = tmp_path / "state.vscdb"
+    _write_cursor_db(
+        path, _cursor_chat("c1", "b1", "alpha question") | _cursor_chat("c2", "b2", "beta question")
+    )
+    db_path = tmp_path / "thimiko.sqlite"
+
+    store = SqliteStore(db_path)
+    try:
+        result = Indexer(store).build([path], forced_source="cursor")
+        assert (result.sessions, result.documents) == (2, 2)
+
+        retriever = KeywordRetriever(store)
+        assert retriever.search("alpha question", limit=5)[0].session_id == "cursor:c1"
+        assert retriever.search("beta question", limit=5)[0].session_id == "cursor:c2"
+    finally:
+        store.close()
+
+
+def test_update_replaces_all_sessions_of_a_changed_multi_session_file(tmp_path: Path) -> None:
+    path = tmp_path / "state.vscdb"
+    _write_cursor_db(
+        path, _cursor_chat("c1", "b1", "alpha question") | _cursor_chat("c2", "b2", "beta question")
+    )
+    db_path = tmp_path / "thimiko.sqlite"
+
+    store = SqliteStore(db_path)
+    try:
+        indexer = Indexer(store)
+        indexer.build([path], forced_source="cursor")
+
+        path.unlink()
+        _write_cursor_db(path, _cursor_chat("c1", "b1", "gamma question"))
+        result = indexer.update([path], forced_source="cursor")
+        assert (result.added, result.updated) == (0, 1)
+
+        retriever = KeywordRetriever(store)
+        assert retriever.search("gamma question", limit=5)[0].session_id == "cursor:c1"
+        # The dropped chat's session went with it — no orphan documents.
+        assert retriever.search("beta question", limit=5) == []
     finally:
         store.close()

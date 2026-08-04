@@ -38,3 +38,12 @@ class ChatSource(ABC):
     @abstractmethod
     def parse(self, path: Path) -> Session:
         """Normalize one session file into the canonical domain model."""
+
+    def parse_all(self, path: Path) -> list[Session]:
+        """Every session stored in `path`.
+
+        One file is one session for the JSONL providers; override for a store
+        that holds many conversations in a single file (e.g. Cursor's SQLite
+        `state.vscdb`).
+        """
+        return [self.parse(path)]

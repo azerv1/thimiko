@@ -22,6 +22,10 @@ def test_search_accepts_gemini_source() -> None:
     assert parse_args(["search", "migration", "--source", "gemini"]).source == "gemini"
 
 
+def test_search_accepts_cursor_source() -> None:
+    assert parse_args(["search", "tokenizer", "--source", "cursor"]).source == "cursor"
+
+
 def test_list_verbose_flag() -> None:
     assert parse_args(["list", "-v"]).verbose is True
     assert parse_args(["list"]).verbose is False
@@ -32,7 +36,7 @@ def test_list_names_every_registered_source(capsys: pytest.CaptureFixture[str]) 
 
     payload = json.loads(capsys.readouterr().out)
     names = [source["name"] for source in payload["sources"]]
-    assert names == ["codex", "claude", "copilot", "gemini"]
+    assert names == ["codex", "claude", "copilot", "gemini", "cursor"]
     assert "indexed" not in payload["sources"][0]
 
 

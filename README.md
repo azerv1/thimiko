@@ -3,7 +3,7 @@
 **thimiko** is **θυμικό**.
 
 It makes your local AI coding chats searchable. It reads Codex, Claude Code,
-GitHub Copilot, and Gemini CLI history, builds a local SQLite index, and lets
+GitHub Copilot, Gemini CLI, and Cursor history, builds a local SQLite index, and lets
 you search it from the terminal or through MCP.
 
 Your original chat files are left alone.
@@ -73,6 +73,7 @@ By default, thimiko reads:
 - Claude Code: `~/.claude/projects/**/*.jsonl`
 - GitHub Copilot: VS Code's `workspaceStorage/*/chatSessions/`
 - Gemini CLI: `~/.gemini/tmp/*/chats/`
+- Cursor: `%APPDATA%\Cursor\User\globalStorage\state.vscdb` (SQLite — one file, many chats)
 
 You can also pass a file or directory directly to `build` or `update`.
 

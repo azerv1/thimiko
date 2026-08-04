@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
-from thimiko.models import Message
+from thimiko.models import Message, Reasoning, ToolCall
 from thimiko.sources import detect
 from thimiko.sources.claude import ClaudeSource
 from thimiko.sources.codex import CodexSource
 from thimiko.sources.copilot import CopilotSource
+from thimiko.sources.cursor import CursorSource
 from thimiko.sources.gemini import GeminiSource
 
 
@@ -17,6 +19,44 @@ def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
         "".join(json.dumps(record) + "\n" for record in records),
         encoding="utf-8",
     )
+
+
+def write_vscdb(path: Path, rows: dict[str, Any], table: str = "cursorDiskKV") -> None:
+    """Write a Cursor-shaped key/value SQLite database (values stored as JSON)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(f"CREATE TABLE {table} (key TEXT PRIMARY KEY, value TEXT)")
+        connection.executemany(
+            f"INSERT INTO {table} VALUES (?, ?)",
+            [(key, json.dumps(value)) for key, value in rows.items()],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _cursor_rows() -> dict[str, Any]:
+    return {
+        "composerData:c1": {
+            "name": "Refactor the parser",
+            "createdAt": 1767225600000,
+            "lastUpdatedAt": 1767225660000,
+            "fullConversationHeadersOnly": [
+                {"bubbleId": "b1", "type": 1},
+                {"bubbleId": "b2", "type": 2},
+                {"bubbleId": "gone", "type": 2},
+            ],
+        },
+        "bubbleId:c1:b1": {"type": 1, "text": "where is the tokenizer"},
+        "bubbleId:c1:b2": {
+            "type": 2,
+            "text": "in lexer.py",
+            "thinking": "checking the imports",
+            "toolFormerData": {"name": "read_file", "params": {"path": "lexer.py"}},
+            "modelType": "claude-opus-5",
+        },
+    }
 
 
 def test_codex_deduplicates_display_events_and_links_tool_result(tmp_path: Path) -> None:
@@ -544,3 +584,93 @@ def test_gemini_matches_discovers_and_namespaces_subagents(tmp_path: Path) -> No
     assert session.parent_session_id == "gemini:parent-session"
     assert session.agent_id == "agent-1"
     assert session.events[0].turn_id == f"{session.id}:turn:fallback-1"
+
+
+def test_cursor_parses_composer_bubbles_in_header_order(tmp_path: Path) -> None:
+    db_path = tmp_path / "globalStorage" / "state.vscdb"
+    write_vscdb(db_path, _cursor_rows())
+
+    session = CursorSource().parse(db_path)
+
+    assert session.id == "cursor:c1"
+    assert session.title == "Refactor the parser"
+    assert session.started_at == "2026-01-01T00:00:00.000Z"
+    assert session.ended_at == "2026-01-01T00:01:00.000Z"
+    assert session.model == "claude-opus-5"
+
+    messages = [event for event in session.events if isinstance(event, Message)]
+    assert [(m.role, m.text) for m in messages] == [
+        ("user", "where is the tokenizer"),
+        ("assistant", "in lexer.py"),
+    ]
+    # The assistant bubble joins the preceding user bubble's turn.
+    assert messages[0].turn_id == messages[1].turn_id == "cursor:c1:turn:b1"
+    assert messages[1].provenance.native_id == "bubbleId:c1:b2"
+    # A header whose bubble body was pruned is skipped, not faked.
+    assert len(messages) == 2
+
+
+def test_cursor_keeps_reasoning_and_tools_out_of_the_search_corpus(tmp_path: Path) -> None:
+    db_path = tmp_path / "globalStorage" / "state.vscdb"
+    write_vscdb(db_path, _cursor_rows())
+
+    session = CursorSource().parse(db_path)
+
+    assert any(isinstance(event, Reasoning) for event in session.events)
+    tool_calls = [event for event in session.events if isinstance(event, ToolCall)]
+    assert [call.tool_name for call in tool_calls] == ["read_file"]
+    assert all(message.searchable for message in session.searchable_messages())
+    assert len(session.searchable_messages()) == 2
+
+
+def test_cursor_yields_one_session_per_composer(tmp_path: Path) -> None:
+    rows = _cursor_rows()
+    rows["composerData:c2"] = {
+        "name": "Second chat",
+        "createdAt": 1767312000000,
+        "fullConversationHeadersOnly": [{"bubbleId": "b9", "type": 1}],
+    }
+    rows["bubbleId:c2:b9"] = {"type": 1, "text": "unrelated question"}
+    db_path = tmp_path / "globalStorage" / "state.vscdb"
+    write_vscdb(db_path, rows)
+
+    sessions = CursorSource().parse_all(db_path)
+
+    assert [session.id for session in sessions] == ["cursor:c1", "cursor:c2"]
+    assert sessions[1].title == "Second chat"
+
+
+def test_cursor_discovers_and_matches_only_its_own_database(tmp_path: Path) -> None:
+    db_path = tmp_path / "globalStorage" / "state.vscdb"
+    write_vscdb(db_path, _cursor_rows())
+    not_sqlite = tmp_path / "globalStorage" / "other.vscdb"
+    not_sqlite.write_text("not a database", encoding="utf-8")
+    jsonl_path = tmp_path / "codex.jsonl"
+    write_jsonl(jsonl_path, [{"type": "session_meta", "payload": {"session_id": "x"}}])
+
+    source = CursorSource()
+    assert source.discover(tmp_path) == [db_path]
+    assert source.matches(db_path) is True
+    assert source.matches(not_sqlite) is False
+    assert source.matches(jsonl_path) is False
+    detected = detect(db_path)
+    assert detected is not None
+    assert detected.name == "cursor"
+
+
+def test_cursor_maps_workspace_folder_to_cwd(tmp_path: Path) -> None:
+    db_path = tmp_path / "globalStorage" / "state.vscdb"
+    write_vscdb(db_path, _cursor_rows())
+    workspace = tmp_path / "workspaceStorage" / "abc123"
+    write_vscdb(
+        workspace / "state.vscdb",
+        {"composer.composerData": {"allComposers": [{"composerId": "c1"}]}},
+        table="ItemTable",
+    )
+    (workspace / "workspace.json").write_text(
+        json.dumps({"folder": "file:///c%3A/Users/dev/repo"}), encoding="utf-8"
+    )
+
+    session = CursorSource().parse(db_path)
+
+    assert session.cwd == "c:/Users/dev/repo"
