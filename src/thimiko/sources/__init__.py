@@ -63,6 +63,22 @@ def iter_session_files(paths: list[Path] | None = None) -> list[Path]:
     return sorted(files)
 
 
+def session_files_by_source() -> dict[str, list[Path]]:
+    """Discovered session files under each registered source's default roots.
+
+    Like `iter_session_files()` but keeps per-source attribution instead of
+    flattening everything into one deduped set.
+    """
+    discovered: dict[str, list[Path]] = {}
+    for source in _REGISTRY:
+        files: set[Path] = set()
+        for root in source.default_roots():
+            if root.exists():
+                files.update(source.discover(root))
+        discovered[source.name] = sorted(files)
+    return discovered
+
+
 def resolve_input_paths(paths: list[str]) -> list[Path]:
     """Return scan paths, defaulting to every registered source's roots when none given."""
     if paths:
@@ -82,4 +98,5 @@ __all__ = [
     "iter_session_files",
     "register",
     "resolve_input_paths",
+    "session_files_by_source",
 ]

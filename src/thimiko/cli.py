@@ -1,4 +1,4 @@
-"""Command-line entry point: build | update | search | mcp.
+"""Command-line entry point: build | update | search | list | mcp.
 
 Bare `thimiko` prints help. The MCP server only starts through `thimiko mcp`.
 """
@@ -10,11 +10,14 @@ import json
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 from thimiko.config import DEFAULT_DB
 from thimiko.dto import SearchResult, answer_dict, clean_snippet, iso_days_ago, relative_time
 from thimiko.indexing import Indexer
 from thimiko.search import KeywordRetriever
+from thimiko.sources import all_sources, session_files_by_source
+from thimiko.storage.base import Store
 
 
 def _print_json(query: str, days: int | None, results: list[SearchResult]) -> None:
@@ -48,6 +51,52 @@ def _print_text(query: str, days: int | None, results: list[SearchResult]) -> No
         for line in textwrap.wrap(clean_snippet(result.snippet), width=96) or [""]:
             print(f"   {line}")
         print(f"   {first.get('path', '')}:{first.get('line', '')}\n")
+
+
+def _source_rows(*, counts: bool, store: Store | None) -> list[dict[str, Any]]:
+    """One row per registered source; chat counts added when `counts` is set.
+
+    `store` is None when no index exists yet — on-disk counts still work, and
+    every source reports zero indexed chats.
+    """
+    on_disk = session_files_by_source() if counts else {}
+    indexed = store.session_counts() if store is not None else {}
+    rows: list[dict[str, Any]] = []
+    for source in all_sources():
+        roots = source.default_roots()
+        row: dict[str, Any] = {
+            "name": source.name,
+            "roots": [str(root) for root in roots],
+            "detected": any(root.exists() for root in roots),
+        }
+        if counts:
+            row["indexed"] = indexed.get(source.name, 0)
+            row["on_disk"] = len(on_disk.get(source.name, []))
+        rows.append(row)
+    return rows
+
+
+def _print_list_json(rows: list[dict[str, Any]], db_path: Path, *, has_index: bool) -> None:
+    payload = {"db": str(db_path), "indexed": has_index, "sources": rows}
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def _print_list_text(rows: list[dict[str, Any]], db_path: Path, *, has_index: bool) -> None:
+    verbose = bool(rows) and "indexed" in rows[0]
+    width = max(len(row["name"]) for row in rows)
+    if verbose:
+        print(f"{'SOURCE'.ljust(width)}  {'INDEXED':>9}  {'ON DISK':>9}")
+    for row in rows:
+        name = str(row["name"]).ljust(width)
+        if verbose:
+            indexed = "-" if not has_index else f"{row['indexed']:,}"
+            print(f"{name}  {indexed:>9}  {row['on_disk']:>9,}")
+        else:
+            print(f"{name}  {'detected' if row['detected'] else 'not found'}")
+        for root in row["roots"]:
+            print(f"    {root}")
+    if verbose and not has_index:
+        print(f"\n(index not built at {db_path} — run `thimiko build`)")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -90,6 +139,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--text", action="store_true", help="Human-readable output instead of JSON"
     )
 
+    list_parser = subparsers.add_parser("list", help="List supported chat sources")
+    list_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Include indexed and on-disk chat counts per source",
+    )
+    list_parser.add_argument(
+        "--text", action="store_true", help="Human-readable output instead of JSON"
+    )
+
     subparsers.add_parser("mcp", help="Launch the MCP server over stdio")
 
     args = parser.parse_args(argv)
@@ -112,6 +172,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     from thimiko.storage import SqliteStore
+
+    if args.command == "list":
+        # Only open (and thereby create) the DB when counts were actually asked for.
+        has_index = db_path.exists()
+        store = SqliteStore(db_path) if args.verbose and has_index else None
+        try:
+            rows = _source_rows(counts=args.verbose, store=store)
+        finally:
+            if store is not None:
+                store.close()
+        if args.text:
+            _print_list_text(rows, db_path, has_index=has_index)
+        else:
+            _print_list_json(rows, db_path, has_index=has_index)
+        return 0
 
     try:
         if args.command == "build":

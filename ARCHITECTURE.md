@@ -26,7 +26,7 @@ Each layer can be extended or swapped without touching the others.
                                   |
                                   v
                           interfaces
-                          cli.py (build/update/search/mcp)
+                          cli.py (build/update/search/list/mcp)
                           mcp.py (search_chats/get_session/get_turn)
 ```
 
@@ -143,7 +143,10 @@ blocks are kept in source order, and each `tool_result` links back to its
 
 ## Interfaces (`cli.py`, `mcp.py`)
 
-`cli.py` is a plain `argparse` CLI: `build`, `update`, `search`, `mcp`.
+`cli.py` is a plain `argparse` CLI: `build`, `update`, `search`, `list`, `mcp`.
+`list` reports the registered sources and their scan roots; `-v` adds per-source
+indexed (`Store.session_counts`) and on-disk (`sources.session_files_by_source`)
+chat counts, so a stale index is visible at a glance.
 Bare `thimiko` prints help; `thimiko mcp` starts the server. It constructs a `SqliteStore` and either
 an `Indexer` or a `KeywordRetriever` — the only two places in the codebase
 that reference `SqliteStore` by name.

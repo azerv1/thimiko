@@ -59,6 +59,14 @@ thimiko search "permission denied" --source codex --limit 5
 thimiko search "rate limit" --days 10 --text
 ```
 
+See which providers this installation supports, where it looks for their history, and
+— with `-v` — how many chats are indexed versus present on disk:
+
+```powershell
+thimiko list
+thimiko list -v --text
+```
+
 By default, thimiko reads:
 
 - Codex: `~/.codex/sessions/**/*.jsonl`

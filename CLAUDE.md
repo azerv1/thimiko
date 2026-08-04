@@ -10,6 +10,7 @@ uv sync                          # create .venv + uv.lock
 uv run thimiko build              # full rebuild of the index (default: %LOCALAPPDATA%\thimiko\thimiko.sqlite)
 uv run thimiko update [--prune]   # incremental: only changed/new files; --prune drops deleted files' sessions
 uv run thimiko search "query"     # BM25 ranked search; JSON by default (--text for humans, --days N for recency)
+uv run thimiko list [-v]          # supported sources + roots; -v adds indexed/on-disk chat counts
 uv run thimiko mcp                # launch the MCP server over stdio
 ```
 

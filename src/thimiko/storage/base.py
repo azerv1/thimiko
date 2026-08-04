@@ -46,6 +46,10 @@ class Store(ABC):
         """Map of indexed file path -> session_id, for pruning deleted files."""
 
     @abstractmethod
+    def session_counts(self) -> dict[str, int]:
+        """Number of indexed sessions per source name."""
+
+    @abstractmethod
     def search(
         self,
         query: str,

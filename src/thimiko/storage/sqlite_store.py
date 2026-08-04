@@ -232,6 +232,12 @@ class SqliteStore(Store):
         rows = self._connection.execute("SELECT path, session_id FROM indexed_files").fetchall()
         return {str(row["path"]): str(row["session_id"]) for row in rows}
 
+    def session_counts(self) -> dict[str, int]:
+        rows = self._connection.execute(
+            "SELECT source, COUNT(*) AS n FROM sessions GROUP BY source"
+        ).fetchall()
+        return {str(row["source"]): int(row["n"]) for row in rows}
+
     def search(
         self,
         query: str,
