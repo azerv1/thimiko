@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -177,6 +179,15 @@ class SqliteStore(Store):
             return False
         return row is not None and str(row["value"]) != SCHEMA_VERSION
 
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        try:
+            yield
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
+
     def upsert_session(self, session: Session, documents: list[SearchDocument]) -> None:
         header = session.header()
         self._connection.execute(
@@ -219,12 +230,10 @@ class SqliteStore(Store):
                 for document in documents
             ],
         )
-        self._connection.commit()
 
     def delete_session(self, session_id: str) -> None:
         self._connection.execute("DELETE FROM documents WHERE session_id = ?", (session_id,))
         self._connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-        self._connection.commit()
 
     def file_state(self, path: str) -> tuple[float, int] | None:
         row = self._connection.execute(
@@ -237,11 +246,9 @@ class SqliteStore(Store):
             "INSERT OR REPLACE INTO indexed_files VALUES (?, ?, ?, ?, ?)",
             (path, mtime, size, json.dumps(session_ids), datetime.now(UTC).isoformat()),
         )
-        self._connection.commit()
 
     def forget_file(self, path: str) -> None:
         self._connection.execute("DELETE FROM indexed_files WHERE path = ?", (path,))
-        self._connection.commit()
 
     def known_files(self) -> dict[str, list[str]]:
         rows = self._connection.execute("SELECT path, session_ids FROM indexed_files").fetchall()

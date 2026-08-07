@@ -49,20 +49,21 @@ class Indexer:
         self.store.create_schema(reset=True)
         session_count = 0
         document_count = 0
-        for file_path in files:
-            source = self._detect(file_path, forced_source)
-            if source is None:
-                continue
-            sessions = source.parse_all(file_path)
-            for session in sessions:
-                documents = documents_for_session(session)
-                self.store.upsert_session(session, documents)
-                document_count += len(documents)
-            stat = file_path.stat()
-            self.store.record_file(
-                str(file_path), stat.st_mtime, stat.st_size, [s.id for s in sessions]
-            )
-            session_count += len(sessions)
+        with self.store.transaction():
+            for file_path in files:
+                source = self._detect(file_path, forced_source)
+                if source is None:
+                    continue
+                sessions = source.parse_all(file_path)
+                for session in sessions:
+                    documents = documents_for_session(session)
+                    self.store.upsert_session(session, documents)
+                    document_count += len(documents)
+                stat = file_path.stat()
+                self.store.record_file(
+                    str(file_path), stat.st_mtime, stat.st_size, [s.id for s in sessions]
+                )
+                session_count += len(sessions)
         return BuildResult(sessions=session_count, documents=document_count)
 
     def update(
@@ -94,25 +95,29 @@ class Indexer:
                 continue
             sessions = source.parse_all(file_path)
 
-            prior_session_ids = known.get(path_key)
-            if prior_session_ids:
-                for prior_session_id in prior_session_ids:
-                    self.store.delete_session(prior_session_id)
-                updated += 1
-            else:
-                added += 1
+            with self.store.transaction():
+                prior_session_ids = known.get(path_key)
+                if prior_session_ids:
+                    for prior_session_id in prior_session_ids:
+                        self.store.delete_session(prior_session_id)
+                    updated += 1
+                else:
+                    added += 1
 
-            for session in sessions:
-                self.store.upsert_session(session, documents_for_session(session))
-            self.store.record_file(path_key, stat.st_mtime, stat.st_size, [s.id for s in sessions])
+                for session in sessions:
+                    self.store.upsert_session(session, documents_for_session(session))
+                self.store.record_file(
+                    path_key, stat.st_mtime, stat.st_size, [s.id for s in sessions]
+                )
 
         pruned = 0
         if prune:
             for path_key, session_ids in known.items():
                 if path_key not in seen_paths and not Path(path_key).exists():
-                    for session_id in session_ids:
-                        self.store.delete_session(session_id)
-                    self.store.forget_file(path_key)
+                    with self.store.transaction():
+                        for session_id in session_ids:
+                            self.store.delete_session(session_id)
+                        self.store.forget_file(path_key)
                     pruned += 1
 
         return UpdateResult(added=added, updated=updated, skipped=skipped, pruned=pruned)

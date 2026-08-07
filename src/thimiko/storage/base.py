@@ -8,6 +8,7 @@ implementing this interface once; nothing else in the pipeline changes.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import AbstractContextManager
 from typing import Any
 
 from thimiko.dto import SearchDocument
@@ -15,11 +16,26 @@ from thimiko.models import Session
 
 
 class Store(ABC):
-    """Persistence backend for canonical sessions and their search documents."""
+    """Persistence backend for canonical sessions and their search documents.
+
+    `upsert_session`, `delete_session`, `record_file`, and `forget_file` are
+    only guaranteed to persist once the `transaction()` block they run inside
+    exits — callers doing more than one write should batch them in a single
+    `transaction()` rather than relying on each call to commit individually.
+    """
 
     @abstractmethod
     def create_schema(self, *, reset: bool) -> None:
         """Create tables/indexes. `reset=True` drops and recreates everything."""
+
+    @abstractmethod
+    def transaction(self) -> AbstractContextManager[None]:
+        """Batch writes made inside the block into a single commit.
+
+        Rolls back on exception. Callers making several writes (e.g. one
+        session's documents plus its file record) should wrap them all in one
+        `transaction()` instead of leaving each write to commit on its own.
+        """
 
     @abstractmethod
     def upsert_session(self, session: Session, documents: list[SearchDocument]) -> None:

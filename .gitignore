@@ -8,6 +8,8 @@ __pycache__/
 *.egg-info/
 data/*
 !data/.gitkeep
+bench/results/*
+!bench/results/.gitkeep
 reports/
 *.sqlite
 *.sqlite-wal
