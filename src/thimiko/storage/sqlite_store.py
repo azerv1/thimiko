@@ -22,7 +22,7 @@ from thimiko.models import Session
 
 from .base import Store
 
-SCHEMA_VERSION = "thimiko/v2"
+SCHEMA_VERSION = "thimiko/v3"
 
 _DROP_SQL = """
 DROP TABLE IF EXISTS documents_fts;
@@ -75,8 +75,7 @@ CREATE TABLE IF NOT EXISTS documents (
     provenance_json TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS documents_session_idx ON documents(session_id);
-CREATE INDEX IF NOT EXISTS documents_turn_idx ON documents(turn_id);
+CREATE INDEX IF NOT EXISTS documents_session_turn_idx ON documents(session_id, turn_id);
 CREATE INDEX IF NOT EXISTS documents_source_time_idx ON documents(source, started_at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -320,18 +319,26 @@ class SqliteStore(Store):
         return header
 
     def get_turn(self, session_id: str, turn_id: str, neighbors: int) -> dict[str, Any] | None:
-        doc_rows = self._connection.execute(
-            "SELECT * FROM documents WHERE session_id = ? ORDER BY turn_id, chunk_index",
+        turn_rows = self._connection.execute(
+            "SELECT DISTINCT turn_id FROM documents WHERE session_id = ? ORDER BY turn_id",
             (session_id,),
         ).fetchall()
-        turn_order = list(dict.fromkeys(str(row["turn_id"]) for row in doc_rows))
+        turn_order = [str(row["turn_id"]) for row in turn_rows]
         if turn_id not in turn_order:
             return None
         index = turn_order.index(turn_id)
         start = max(0, index - neighbors)
         end = min(len(turn_order), index + neighbors + 1)
-        window = set(turn_order[start:end])
-        windowed_rows = [row for row in doc_rows if str(row["turn_id"]) in window]
+        window = turn_order[start:end]
+        placeholders = ",".join("?" for _ in window)
+        windowed_rows = self._connection.execute(
+            f"""
+            SELECT * FROM documents
+            WHERE session_id = ? AND turn_id IN ({placeholders})
+            ORDER BY turn_id, chunk_index
+            """,
+            [session_id, *window],
+        ).fetchall()
         return {
             "session_id": session_id,
             "turn_id": turn_id,

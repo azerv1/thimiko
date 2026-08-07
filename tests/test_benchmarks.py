@@ -54,6 +54,50 @@ def _write_fixtures(directory: Path, count: int) -> None:
         path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
 
 
+def _write_large_session(directory: Path, turn_count: int) -> None:
+    """One session with many turns, to benchmark `get_turn` windowing."""
+    directory.mkdir(parents=True, exist_ok=True)
+    records: list[dict[str, Any]] = [
+        {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "type": "session_meta",
+            "payload": {"session_id": "large", "cwd": "C:/repo"},
+        }
+    ]
+    for turn in range(turn_count):
+        records.append(
+            {
+                "timestamp": "2026-01-01T00:00:00Z",
+                "type": "turn_context",
+                "payload": {"turn_id": f"turn{turn}"},
+            }
+        )
+        records.append(
+            {
+                "timestamp": "2026-01-01T00:00:01Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": f"question {turn}"}],
+                },
+            }
+        )
+        records.append(
+            {
+                "timestamp": "2026-01-01T00:00:02Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": f"answer {turn}"}],
+                },
+            }
+        )
+    path = directory / "rollout-large.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+
+
 def test_build_benchmark(tmp_path: Path, benchmark: Any) -> None:
     fixtures_dir = tmp_path / "fixtures"
     _write_fixtures(fixtures_dir, _SESSION_COUNT)
@@ -100,5 +144,19 @@ def test_search_benchmark(tmp_path: Path, benchmark: Any) -> None:
         Indexer(store).build([fixtures_dir], forced_source="codex")
         retriever = KeywordRetriever(store)
         benchmark(lambda: retriever.search("question topic", limit=10))
+    finally:
+        store.close()
+
+
+def test_get_turn_benchmark(tmp_path: Path, benchmark: Any) -> None:
+    fixtures_dir = tmp_path / "fixtures"
+    _write_large_session(fixtures_dir, turn_count=500)
+    db_path = tmp_path / "thimiko.sqlite"
+
+    store = SqliteStore(db_path)
+    try:
+        Indexer(store).build([fixtures_dir], forced_source="codex")
+        retriever = KeywordRetriever(store)
+        benchmark(lambda: retriever.expand("codex:large", "codex:large:turn:turn5", neighbors=1))
     finally:
         store.close()
