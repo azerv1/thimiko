@@ -26,6 +26,15 @@ deterministic — no real chat history involved), then times:
 - `update` (1 changed file): incremental update after touching one session file
 - `search`: p50/p95 latency over randomized keyword queries
 
+Message text is drawn from a ~5,000-word pseudo-word pool (syllable pairs),
+not a handful of repeated real words — a small vocabulary makes every FTS
+query match most of the corpus, which inflates search latency numbers far
+past what real chat text produces.
+
+First-touch builds against freshly created fixture files can be 5-10x slower
+than a repeat run on this machine (looks like Windows Defender scanning new
+files) — treat the first run after fixture generation as noise, not signal.
+
 ## Profiling
 
 For a CPU profile of a specific workload:

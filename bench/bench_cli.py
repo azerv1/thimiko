@@ -31,11 +31,17 @@ _SIZES: dict[str, tuple[int, int]] = {
     "medium": (500, 6),
 }
 
-_WORDS = (
-    "the quick brown fox jumps over lazy dog while refactoring sqlite index "
-    "and searching turn documents for relevant context across many sessions "
-    "profile build update search commit transaction batch parser latency"
+_SYLLABLES = (
+    "ba be bi bo bu ca ce ci co cu da de di do du fa fe fi fo fu "
+    "ga ge gi go gu ha he hi ho hu ja je ka ke la le li lo lu "
+    "ma me mi mo mu na ne ni no nu pa pe pi po pu ra re ri ro ru "
+    "sa se si so su ta te ti to tu va ve vi vo vu wa we wi wo wu"
 ).split()
+
+# A few thousand pseudo-words so FTS match sets look like real chat text
+# instead of a handful of terms every document contains (which makes search
+# latency numbers meaningless — see bench/README.md).
+_WORDS = [a + b for a in _SYLLABLES for b in _SYLLABLES]
 
 
 def _lorem(rng: random.Random, word_count: int) -> str:
