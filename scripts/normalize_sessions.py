@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--source",
-        choices=("auto", "codex", "claude", "copilot", "gemini"),
+        choices=("auto", "codex", "claude", "copilot", "gemini", "cursor", "opencode"),
         default="auto",
         help="Force a source dialect instead of detecting each file.",
     )
@@ -62,13 +62,15 @@ def main() -> int:
                 source = detect(file_path, forced_source)
                 if source is None:
                     continue
-                session = source.parse(file_path)
-                for record in iter_records(session):
-                    handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
-                    handle.write("\n")
-                session_count += 1
-                event_count += len(session.events)
-                searchable_count += sum(event.searchable for event in session.events)
+                for session in source.parse_all(file_path):
+                    for record in iter_records(session):
+                        handle.write(
+                            json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+                        )
+                        handle.write("\n")
+                    session_count += 1
+                    event_count += len(session.events)
+                    searchable_count += sum(event.searchable for event in session.events)
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

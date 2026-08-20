@@ -3,8 +3,8 @@
 **thimiko** is **θυμικό**.
 
 It makes your local AI coding chats searchable. It reads Codex, Claude Code,
-GitHub Copilot, Gemini CLI, and Cursor history, builds a local SQLite index, and lets
-you search it from the terminal or through MCP.
+GitHub Copilot, Gemini CLI, Cursor, and OpenCode history, builds a local SQLite
+index, and lets you search it from the terminal or through MCP.
 
 Your original chat files are left alone.
 
@@ -74,8 +74,16 @@ By default, thimiko reads:
 - GitHub Copilot: VS Code's `workspaceStorage/*/chatSessions/`
 - Gemini CLI: `~/.gemini/tmp/*/chats/`
 - Cursor: `%APPDATA%\Cursor\User\globalStorage\state.vscdb` (SQLite — one file, many chats)
+- OpenCode: `%USERPROFILE%\.local\share\opencode\opencode.db` on Windows;
+  `$XDG_DATA_HOME/opencode/opencode.db` when `XDG_DATA_HOME` is set; otherwise
+  `~/.local/share/opencode/opencode.db` (SQLite — one file, many chats)
 
 You can also pass a file or directory directly to `build` or `update`.
+Set `THIMIKO_OPENCODE_ROOT` to override OpenCode discovery with either its data
+directory or the database file.
+
+`opencode.db` is always an input source and is opened read-only. Do not pass it
+as Thimiko's `--db`: that option names Thimiko's separate derived search index.
 
 ## MCP
 
@@ -89,7 +97,7 @@ It exposes three tools: `search_chats`, `get_turn`, and `get_session`. Point you
 MCP client at `thimiko mcp`, then your assistant can search old chats and open
 the relevant surrounding conversation.
 
-The index stays local. Its default location is
+The separate Thimiko index stays local. Its default location is
 `%LOCALAPPDATA%\thimiko\thimiko.sqlite` on Windows.
 
 For implementation details and instructions for adding another chat source,

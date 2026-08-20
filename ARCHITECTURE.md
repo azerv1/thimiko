@@ -1,7 +1,8 @@
 # Architecture
 
-thimiko normalizes local Codex, Claude Code, GitHub Copilot, Gemini CLI, and Cursor chat history into one
-canonical model, indexes it for full-text search, and serves it to a human or an LLM
+thimiko normalizes local Codex, Claude Code, GitHub Copilot, Gemini CLI, Cursor,
+and OpenCode chat history into one canonical model, indexes it for full-text search,
+and serves it to a human or an LLM
 (via MCP). The pipeline is layered as four small interfaces; everything above
 a layer depends only on that layer's ABC, never on a concrete implementation.
 Each layer can be extended or swapped without touching the others.
@@ -14,6 +15,7 @@ Each layer can be extended or swapped without touching the others.
  CopilotSource
  GeminiSource
  CursorSource
+ OpenCodeSource
                                   |
                                   v
                           indexing (pipeline)
@@ -38,8 +40,10 @@ Each layer can be extended or swapped without touching the others.
 2. `indexing.chunking.documents_for_session()` groups a session's events into
    `Turn`s, keeps only searchable `Message`s, and chunks long turns into
    `SearchDocument`s (Phase 4).
-3. `Indexer` drives a `Store` through `build()` (full rebuild) or `update()`
-   (incremental, mtime/size-keyed) using any registered sources (Phase 4).
+3. `Indexer` captures the source fingerprint, then drives a `Store` through
+   `build()` (full rebuild) or `update()` (incremental, fingerprint-keyed) using
+   any registered sources (Phase 4). Capturing before parsing ensures a provider
+   write during the read is detected by the next update.
 4. A `Retriever` (currently `KeywordRetriever`, BM25 via FTS5) turns a query
    into ranked `SearchResult`s and expands a hit into neighboring turns
    (Phase 5).
@@ -59,6 +63,7 @@ class ChatSource(ABC):
     def matches(self, path: Path) -> bool: ...
     def parse(self, path: Path) -> Session: ...
     def parse_all(self, path: Path) -> list[Session]: ...  # defaults to [parse(path)]
+    def fingerprint(self, path: Path) -> tuple[float, int]: ...  # defaults to mtime/size
 ```
 
 **To add a new chat-history provider** ("agy history" or anything else):
@@ -75,7 +80,8 @@ recursive `*.jsonl`; a provider stored differently overrides it (e.g.
 `CopilotSource` globs VSCode's mixed `.json`/`.jsonl` `chatSessions/`). Concrete
 sources today: `CodexSource`, `ClaudeSource`, `CopilotSource` (GitHub Copilot /
 VSCode chat), `GeminiSource` (legacy JSON snapshots plus current append-only
-JSONL sessions, including checkpoints and rewinds), and `CursorSource`.
+JSONL sessions, including checkpoints and rewinds), `CursorSource`, and
+`OpenCodeSource`.
 
 `parse_all()` exists because one file is not always one session. Every JSONL
 provider inherits the default (`[self.parse(path)]`), but Cursor stores every
@@ -86,6 +92,19 @@ chat as rows in a single SQLite database —
 overrides it and returns one `Session` per composer. `Provenance.line` is the
 `cursorDiskKV` rowid and `native_id` the full key, so the link back to the raw
 record survives the change of medium.
+
+OpenCode also stores many conversations in one SQLite database,
+`~/.local/share/opencode/opencode.db`. `OpenCodeSource` opens it through a
+SQLite URI with `mode=ro`, starts an explicit read transaction, and reads only
+the materialized `session`, `message`, `part`, and optional `workspace` tables.
+Detection requires the expected columns on all three required tables, so an
+unrelated database does not match. One OpenCode session becomes one canonical
+`Session`; part rowids, IDs, and ordinals are retained as provenance. Reasoning,
+tools, files, patches, and other part types remain non-searchable events.
+
+The default fingerprint is the source file's mtime and size. OpenCode overrides
+it to combine `opencode.db` with `opencode.db-wal` (but not `-shm`), so live
+WAL-only writes trigger another incremental update.
 
 ### `Store` (`src/thimiko/storage/base.py`)
 
@@ -99,9 +118,9 @@ Persistence backend for sessions and their search documents: `create_schema`,
 `embeddings` (reserved, unused — see below), `indexed_files` (path -> mtime/
 size/session_ids, drives `update`), `metadata`.
 
-`indexed_files.session_ids` is a JSON array, not a single id, because a Cursor
-`state.vscdb` maps to many sessions; `record_file`/`known_files` take and return
-lists. The index is a derived cache, so `create_schema` drops and recreates
+`indexed_files.session_ids` is a JSON array, not a single id, because Cursor and
+OpenCode databases map to many sessions; `record_file`/`known_files` take and
+return lists. The index is a derived cache, so `create_schema` drops and recreates
 everything when the stored `metadata.schema_version` predates `SCHEMA_VERSION`
 (currently `thimiko/v2`) rather than migrating in place — the next
 `build`/`update` refills it.
@@ -181,7 +200,9 @@ CLI-only — the MCP server never mutates the index.
 ## Adding a new backend, source, or retriever
 
 1. **New chat-history provider**: implement `ChatSource`, register it. See
-   `sources/codex.py` / `sources/claude.py` as templates.
+   `sources/codex.py` / `sources/claude.py` for JSONL and `sources/cursor.py` /
+   `sources/opencode.py` for multi-session SQLite. Override `fingerprint()` when
+   live state spans sidecar files such as a WAL.
 2. **New storage backend**: implement `Store` in `storage/`. `Indexer`,
    `KeywordRetriever`, `cli.py`, and `mcp.py` need one constructor call
    changed, nothing else.

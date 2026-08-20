@@ -15,6 +15,7 @@ from .codex import CodexSource
 from .copilot import CopilotSource
 from .cursor import CursorSource
 from .gemini import GeminiSource
+from .opencode import OpenCodeSource
 
 _REGISTRY: list[ChatSource] = [
     CodexSource(),
@@ -22,6 +23,7 @@ _REGISTRY: list[ChatSource] = [
     CopilotSource(),
     GeminiSource(),
     CursorSource(),
+    OpenCodeSource(),
 ]
 
 
@@ -100,6 +102,7 @@ __all__ = [
     "CopilotSource",
     "CursorSource",
     "GeminiSource",
+    "OpenCodeSource",
     "all_sources",
     "default_roots",
     "detect",

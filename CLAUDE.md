@@ -1,7 +1,8 @@
 # thimiko — agent guide
 
-Layered, searchable memory over local Codex, Claude Code, GitHub Copilot, Gemini CLI, and Cursor chat
-history. See `ARCHITECTURE.md` for the layer/interface design before changing structure.
+Layered, searchable memory over local Codex, Claude Code, GitHub Copilot, Gemini
+CLI, Cursor, and OpenCode chat history. See `ARCHITECTURE.md` for the
+layer/interface design before changing structure.
 
 ## Commands
 
@@ -30,6 +31,12 @@ uv run thimiko mcp                # launch the MCP server over stdio
 - `Store`, `Retriever`, and `ChatSource` are ABCs for a reason: code above a
   layer must depend only on the interface (e.g. `cli.py`/`mcp.py` never
   import `sqlite3` directly).
+- Provider databases are inputs, never index targets. In particular,
+  `opencode.db` must only be opened read-only as a source; `--db` always names
+  Thimiko's separate derived SQLite index.
+- Capture `ChatSource.fingerprint()` before parsing and record that exact value.
+  OpenCode combines its main database and WAL so concurrent writes remain visible
+  to the next `update`.
 
 ## Quality bar
 
@@ -51,7 +58,9 @@ uv run thimiko mcp                # launch the MCP server over stdio
 ## Where things live
 
 - `src/thimiko/models/` — OOP domain model (`Session`, `Turn`, `Event` + subclasses).
-- `src/thimiko/sources/` — pluggable ingestion adapters (`CodexSource`, `ClaudeSource`, `CopilotSource`, `GeminiSource`, `CursorSource`).
+- `src/thimiko/sources/` — pluggable ingestion adapters (`CodexSource`,
+  `ClaudeSource`, `CopilotSource`, `GeminiSource`, `CursorSource`,
+  `OpenCodeSource`).
 - `src/thimiko/storage/` — pluggable persistence (`SqliteStore`).
 - `src/thimiko/indexing/` — chunking + `Indexer` (build/update).
 - `src/thimiko/search/` — pluggable retrieval (`KeywordRetriever`).

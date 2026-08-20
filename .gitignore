@@ -16,3 +16,4 @@ reports/
 *.sqlite-wal
 *.sqlite-shm
 bash.exe.stackdump
+.aider*

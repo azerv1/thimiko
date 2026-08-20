@@ -54,15 +54,13 @@ class Indexer:
                 source = self._detect(file_path, forced_source)
                 if source is None:
                     continue
+                mtime, size = source.fingerprint(file_path)
                 sessions = source.parse_all(file_path)
                 for session in sessions:
                     documents = documents_for_session(session)
                     self.store.upsert_session(session, documents)
                     document_count += len(documents)
-                stat = file_path.stat()
-                self.store.record_file(
-                    str(file_path), stat.st_mtime, stat.st_size, [s.id for s in sessions]
-                )
+                self.store.record_file(str(file_path), mtime, size, [s.id for s in sessions])
                 session_count += len(sessions)
         return BuildResult(sessions=session_count, documents=document_count)
 
@@ -84,14 +82,13 @@ class Indexer:
         for file_path in files:
             path_key = str(file_path)
             seen_paths.add(path_key)
-            stat = file_path.stat()
-            previous = self.store.file_state(path_key)
-            if previous is not None and previous == (stat.st_mtime, stat.st_size):
-                skipped += 1
-                continue
-
             source = self._detect(file_path, forced_source)
             if source is None:
+                continue
+            mtime, size = source.fingerprint(file_path)
+            previous = self.store.file_state(path_key)
+            if previous is not None and previous == (mtime, size):
+                skipped += 1
                 continue
             sessions = source.parse_all(file_path)
 
@@ -106,9 +103,7 @@ class Indexer:
 
                 for session in sessions:
                     self.store.upsert_session(session, documents_for_session(session))
-                self.store.record_file(
-                    path_key, stat.st_mtime, stat.st_size, [s.id for s in sessions]
-                )
+                self.store.record_file(path_key, mtime, size, [s.id for s in sessions])
 
         pruned = 0
         if prune:

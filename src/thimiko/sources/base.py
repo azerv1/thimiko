@@ -47,3 +47,8 @@ class ChatSource(ABC):
         `state.vscdb`).
         """
         return [self.parse(path)]
+
+    def fingerprint(self, path: Path) -> tuple[float, int]:
+        """Incremental-update identity captured before this source is parsed."""
+        stat = path.stat()
+        return (stat.st_mtime, stat.st_size)

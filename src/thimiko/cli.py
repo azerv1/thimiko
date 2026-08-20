@@ -102,7 +102,9 @@ def _print_list_text(rows: list[dict[str, Any]], db_path: Path, *, has_index: bo
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build, update, and search local chat history.")
     parser.add_argument(
-        "--db", default=str(DEFAULT_DB), help=f"SQLite index path; default {DEFAULT_DB}"
+        "--db",
+        default=str(DEFAULT_DB),
+        help=f"Thimiko SQLite index path (never a provider source); default {DEFAULT_DB}",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -112,7 +114,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     build_parser.add_argument(
         "--source",
-        choices=("auto", "codex", "claude", "copilot", "gemini", "cursor"),
+        choices=("auto", "codex", "claude", "copilot", "gemini", "cursor", "opencode"),
         default="auto",
     )
 
@@ -122,7 +124,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     update_parser.add_argument(
         "--source",
-        choices=("auto", "codex", "claude", "copilot", "gemini", "cursor"),
+        choices=("auto", "codex", "claude", "copilot", "gemini", "cursor", "opencode"),
         default="auto",
     )
     update_parser.add_argument(
@@ -132,7 +134,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     search_parser = subparsers.add_parser("search", help="Search indexed turn documents")
     search_parser.add_argument("query")
     search_parser.add_argument(
-        "--source", choices=("codex", "claude", "copilot", "gemini", "cursor")
+        "--source", choices=("codex", "claude", "copilot", "gemini", "cursor", "opencode")
     )
     search_parser.add_argument("--limit", type=int, default=10)
     search_parser.add_argument(

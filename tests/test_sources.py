@@ -5,13 +5,17 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from thimiko.models import Message, Reasoning, ToolCall
+import pytest
+
+from thimiko.indexing import documents_for_session
+from thimiko.models import Attachment, Message, Reasoning, ToolCall, ToolResult
 from thimiko.sources import detect
 from thimiko.sources.claude import ClaudeSource
 from thimiko.sources.codex import CodexSource
 from thimiko.sources.copilot import CopilotSource
 from thimiko.sources.cursor import CursorSource
 from thimiko.sources.gemini import GeminiSource
+from thimiko.sources.opencode import OpenCodeSource
 
 
 def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
@@ -32,6 +36,231 @@ def write_vscdb(path: Path, rows: dict[str, Any], table: str = "cursorDiskKV") -
             [(key, json.dumps(value)) for key, value in rows.items()],
         )
         connection.commit()
+    finally:
+        connection.close()
+
+
+def write_opencode_db(path: Path) -> dict[str, int]:
+    """Write representative materialized OpenCode session/message/part rows."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT,
+                time_created INTEGER, time_updated INTEGER, workspace_id TEXT,
+                agent TEXT, model TEXT
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT
+            );
+            CREATE TABLE part (
+                id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT
+            );
+            CREATE TABLE workspace (id TEXT PRIMARY KEY, branch TEXT);
+            CREATE TABLE credential (secret TEXT);
+            """
+        )
+        connection.execute("INSERT INTO workspace VALUES ('ws-1', 'main')")
+        connection.execute("INSERT INTO credential VALUES ('must-not-be-read')")
+        connection.executemany(
+            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    "ses-root",
+                    None,
+                    "C:/repo",
+                    "OpenCode parser",
+                    1767225600000,
+                    1767225660000,
+                    "ws-1",
+                    None,
+                    None,
+                ),
+                (
+                    "ses-child",
+                    "ses-root",
+                    "C:/repo/sub",
+                    "Child session",
+                    1767225700000,
+                    1767225710000,
+                    None,
+                    "plan",
+                    json.dumps({"providerID": "openai", "id": "gpt-5"}),
+                ),
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO message VALUES (?, ?, ?, ?)",
+            [
+                (
+                    "msg-assistant-1",
+                    "ses-root",
+                    1767225602000,
+                    json.dumps(
+                        {
+                            "role": "assistant",
+                            "parentID": "msg-user-1",
+                            "providerID": "anthropic",
+                            "modelID": "claude-sonnet",
+                            "agent": "build",
+                        }
+                    ),
+                ),
+                (
+                    "msg-user-1",
+                    "ses-root",
+                    1767225601000,
+                    json.dumps(
+                        {
+                            "role": "user",
+                            "agent": "build",
+                            "model": {
+                                "providerID": "anthropic",
+                                "modelID": "claude-sonnet",
+                            },
+                        }
+                    ),
+                ),
+                (
+                    "msg-user-2",
+                    "ses-root",
+                    1767225603000,
+                    json.dumps({"role": "user", "agent": "build", "model": {}}),
+                ),
+                (
+                    "msg-assistant-2",
+                    "ses-root",
+                    1767225603000,
+                    json.dumps({"role": "assistant", "parentID": "msg-user-2"}),
+                ),
+                ("msg-bad", "ses-root", 1767225604000, "{"),
+                (
+                    "msg-child",
+                    "ses-child",
+                    1767225701000,
+                    json.dumps({"role": "user", "agent": "plan"}),
+                ),
+            ],
+        )
+        parts: list[tuple[str, str, str, str]] = [
+            (
+                "p-synthetic",
+                "msg-user-1",
+                "ses-root",
+                json.dumps({"type": "text", "text": "hidden synthetic", "synthetic": True}),
+            ),
+            (
+                "p-text",
+                "msg-user-1",
+                "ses-root",
+                json.dumps({"type": "text", "text": "searchable user"}),
+            ),
+            (
+                "p-file",
+                "msg-user-1",
+                "ses-root",
+                json.dumps(
+                    {
+                        "type": "file",
+                        "mime": "text/plain",
+                        "filename": "internal-file.txt",
+                        "url": "file:///internal-file.txt",
+                    }
+                ),
+            ),
+            ("p-malformed", "msg-user-1", "ses-root", "{"),
+            (
+                "p-reason",
+                "msg-assistant-1",
+                "ses-root",
+                json.dumps({"type": "reasoning", "text": "private chain of thought"}),
+            ),
+            (
+                "p-tool-complete",
+                "msg-assistant-1",
+                "ses-root",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "callID": "call-complete",
+                        "tool": "read",
+                        "state": {
+                            "status": "completed",
+                            "input": {"path": "secret-file"},
+                            "output": "secret tool output",
+                            "title": "Read",
+                        },
+                    }
+                ),
+            ),
+            (
+                "p-assistant-text",
+                "msg-assistant-1",
+                "ses-root",
+                json.dumps({"type": "text", "text": "searchable answer"}),
+            ),
+            (
+                "p-patch",
+                "msg-assistant-1",
+                "ses-root",
+                json.dumps({"type": "patch", "hash": "abc", "files": ["secret.patch"]}),
+            ),
+            (
+                "p-unknown",
+                "msg-assistant-1",
+                "ses-root",
+                json.dumps({"type": "future-part", "text": "future internal payload"}),
+            ),
+            (
+                "p-empty",
+                "msg-user-2",
+                "ses-root",
+                json.dumps({"type": "text", "text": ""}),
+            ),
+            (
+                "p-ignored",
+                "msg-user-2",
+                "ses-root",
+                json.dumps({"type": "text", "text": "hidden ignored", "ignored": True}),
+            ),
+            (
+                "p-tool-error",
+                "msg-assistant-2",
+                "ses-root",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "callID": "call-error",
+                        "tool": "shell",
+                        "state": {
+                            "status": "error",
+                            "input": {"command": "private command"},
+                            "error": "secret tool error",
+                        },
+                    }
+                ),
+            ),
+            (
+                "p-bad-message",
+                "msg-bad",
+                "ses-root",
+                json.dumps({"type": "text", "text": "malformed message payload"}),
+            ),
+            (
+                "p-child",
+                "msg-child",
+                "ses-child",
+                json.dumps({"type": "text", "text": "child searchable"}),
+            ),
+        ]
+        connection.executemany("INSERT INTO part VALUES (?, ?, ?, ?)", parts)
+        connection.commit()
+        return {
+            str(row[1]): int(row[0])
+            for row in connection.execute("SELECT rowid, id FROM part").fetchall()
+        }
     finally:
         connection.close()
 
@@ -674,3 +903,153 @@ def test_cursor_maps_workspace_folder_to_cwd(tmp_path: Path) -> None:
     session = CursorSource().parse(db_path)
 
     assert session.cwd == "c:/Users/dev/repo"
+
+
+def test_opencode_discovers_matches_and_parses_materialized_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "opencode" / "opencode.db"
+    rowids = write_opencode_db(db_path)
+    before = db_path.stat()
+    unrelated = tmp_path / "unrelated.db"
+    connection = sqlite3.connect(unrelated)
+    try:
+        connection.executescript("CREATE TABLE session (id TEXT); CREATE TABLE message (id TEXT);")
+        connection.commit()
+    finally:
+        connection.close()
+
+    source = OpenCodeSource()
+    assert source.discover(db_path.parent) == [db_path]
+    assert source.discover(db_path) == [db_path]
+    assert source.matches(db_path) is True
+    assert source.matches(unrelated) is False
+    detected = detect(db_path)
+    assert detected is not None
+    assert detected.name == "opencode"
+
+    sessions = source.parse_all(db_path)
+    after = db_path.stat()
+
+    assert (before.st_mtime_ns, before.st_size) == (after.st_mtime_ns, after.st_size)
+    assert [session.id for session in sessions] == ["opencode:ses-root", "opencode:ses-child"]
+    root, child = sessions
+    assert root.title == "OpenCode parser"
+    assert root.cwd == "C:/repo"
+    assert root.git_branch == "main"
+    assert root.agent_id == "build"
+    assert root.model == "anthropic/claude-sonnet"
+    assert root.started_at == "2026-01-01T00:00:00.000Z"
+    assert root.ended_at == "2026-01-01T00:01:00.000Z"
+    assert child.parent_session_id == "opencode:ses-root"
+    assert child.model == "openai/gpt-5"
+    assert child.agent_id == "plan"
+
+    native_ids = [event.provenance.native_id for event in root.events]
+    assert native_ids == [
+        "p-file",
+        "p-synthetic",
+        "p-text",
+        "p-assistant-text",
+        "p-patch",
+        "p-reason",
+        "p-tool-complete",
+        "p-tool-complete",
+        "p-unknown",
+        "p-tool-error",
+        "p-tool-error",
+        "p-ignored",
+    ]
+    assert [event.sequence for event in root.events] == list(range(1, len(root.events) + 1))
+    assert root.events[0].provenance.line == rowids["p-file"]
+    assert root.events[0].provenance.part == 0
+    assert root.events[2].provenance.part == 3
+    assert all(event.provenance.path == str(db_path) for event in root.events)
+
+
+def test_opencode_groups_turns_links_tools_and_excludes_internal_content(tmp_path: Path) -> None:
+    db_path = tmp_path / "opencode.db"
+    write_opencode_db(db_path)
+    session = OpenCodeSource().parse_all(db_path)[0]
+
+    first_turn = "opencode:ses-root:turn:msg-user-1"
+    second_turn = "opencode:ses-root:turn:msg-user-2"
+    assert all(event.turn_id == first_turn for event in session.events[:9])
+    assert all(event.turn_id == second_turn for event in session.events[9:])
+
+    calls = [event for event in session.events if isinstance(event, ToolCall)]
+    results = [event for event in session.events if isinstance(event, ToolResult)]
+    assert [(call.tool_call_id, call.tool_name) for call in calls] == [
+        ("call-complete", "read"),
+        ("call-error", "shell"),
+    ]
+    assert [result.parent_id for result in results] == [call.id for call in calls]
+    assert all(result.provenance.part is not None for result in results)
+    assert any(isinstance(event, Reasoning) for event in session.events)
+    assert sum(isinstance(event, Attachment) for event in session.events) == 3
+
+    messages = [event for event in session.events if isinstance(event, Message)]
+    assert [(message.text, message.searchable) for message in messages] == [
+        ("hidden synthetic", False),
+        ("searchable user", True),
+        ("searchable answer", True),
+        ("hidden ignored", False),
+    ]
+    corpus = "\n".join(document.text for document in documents_for_session(session))
+    assert "searchable user" in corpus
+    assert "searchable answer" in corpus
+    for hidden in (
+        "hidden synthetic",
+        "hidden ignored",
+        "private chain of thought",
+        "secret tool output",
+        "secret tool error",
+        "secret-file",
+        "secret.patch",
+        "future internal payload",
+        "malformed message payload",
+    ):
+        assert hidden not in corpus
+
+
+def test_opencode_uses_read_only_transactions_and_only_approved_tables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "opencode.db"
+    write_opencode_db(db_path)
+    real_connect = sqlite3.connect
+    database_uris: list[str] = []
+    statements: list[str] = []
+
+    def traced_connect(database: str, *args: Any, **kwargs: Any) -> sqlite3.Connection:
+        database_uris.append(database)
+        connection: sqlite3.Connection = real_connect(database, *args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr("thimiko.sources.opencode.sqlite3.connect", traced_connect)
+
+    assert len(OpenCodeSource().parse_all(db_path)) == 2
+    assert database_uris and all("mode=ro" in uri for uri in database_uris)
+    assert "BEGIN" in statements
+    allowed = {"session", "message", "part", "workspace"}
+    for statement in statements:
+        lowered = statement.lower()
+        if " from " in lowered:
+            table = lowered.split(" from ", 1)[1].split()[0].strip('"')
+            assert table in allowed
+    assert not any("credential" in statement.lower() for statement in statements)
+
+
+def test_opencode_root_overrides_accept_directory_or_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "custom-opencode"
+    database = root / "history.sqlite"
+    monkeypatch.setenv("THIMIKO_OPENCODE_ROOT", str(root))
+    assert OpenCodeSource().default_roots() == [root]
+
+    monkeypatch.setenv("THIMIKO_OPENCODE_ROOT", str(database))
+    assert OpenCodeSource().default_roots() == [database]
+
+    monkeypatch.delenv("THIMIKO_OPENCODE_ROOT")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert OpenCodeSource().default_roots() == [tmp_path / "xdg" / "opencode"]

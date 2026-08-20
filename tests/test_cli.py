@@ -26,6 +26,12 @@ def test_search_accepts_cursor_source() -> None:
     assert parse_args(["search", "tokenizer", "--source", "cursor"]).source == "cursor"
 
 
+def test_commands_accept_opencode_source() -> None:
+    assert parse_args(["build", "--source", "opencode"]).source == "opencode"
+    assert parse_args(["update", "--source", "opencode"]).source == "opencode"
+    assert parse_args(["search", "tokenizer", "--source", "opencode"]).source == "opencode"
+
+
 def test_list_verbose_flag() -> None:
     assert parse_args(["list", "-v"]).verbose is True
     assert parse_args(["list"]).verbose is False
@@ -36,7 +42,7 @@ def test_list_names_every_registered_source(capsys: pytest.CaptureFixture[str]) 
 
     payload = json.loads(capsys.readouterr().out)
     names = [source["name"] for source in payload["sources"]]
-    assert names == ["codex", "claude", "copilot", "gemini", "cursor"]
+    assert names == ["codex", "claude", "copilot", "gemini", "cursor", "opencode"]
     assert "indexed" not in payload["sources"][0]
 
 

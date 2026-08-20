@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "thimiko"
-version = "0.1.2"
+version = "0.1.3"
 description = "Searchable memory over local AI coding chat histories"
 readme = "README.md"
 requires-python = ">=3.12"

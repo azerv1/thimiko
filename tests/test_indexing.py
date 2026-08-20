@@ -6,8 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from thimiko.indexing import Indexer, documents_for_session
+from thimiko.models import Session
 from thimiko.search import KeywordRetriever
 from thimiko.sources.codex import CodexSource
+from thimiko.sources.opencode import OpenCodeSource
 from thimiko.storage import SqliteStore
 
 
@@ -191,6 +193,60 @@ def _cursor_chat(composer_id: str, bubble_id: str, text: str) -> dict[str, Any]:
     }
 
 
+def _create_opencode_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT,
+            time_created INTEGER, time_updated INTEGER, workspace_id TEXT,
+            agent TEXT, model TEXT
+        );
+        CREATE TABLE message (
+            id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT
+        );
+        CREATE TABLE part (
+            id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT
+        );
+        """
+    )
+
+
+def _insert_opencode_chat(
+    connection: sqlite3.Connection, session_id: str, message_id: str, text: str, created: int
+) -> None:
+    connection.execute(
+        "INSERT OR IGNORE INTO session VALUES (?, NULL, ?, ?, ?, ?, NULL, NULL, NULL)",
+        (session_id, "C:/repo", f"chat {session_id}", created, created + 1),
+    )
+    connection.execute(
+        "INSERT INTO message VALUES (?, ?, ?, ?)",
+        (message_id, session_id, created, json.dumps({"role": "user", "agent": "build"})),
+    )
+    connection.execute(
+        "INSERT INTO part VALUES (?, ?, ?, ?)",
+        (
+            f"part-{message_id}",
+            message_id,
+            session_id,
+            json.dumps({"type": "text", "text": text}),
+        ),
+    )
+
+
+def _write_opencode_db(path: Path, chats: list[tuple[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        _create_opencode_schema(connection)
+        for index, (session_id, text) in enumerate(chats):
+            _insert_opencode_chat(
+                connection, session_id, f"message-{index}", text, 1767225600000 + index
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_build_indexes_every_session_in_a_multi_session_file(tmp_path: Path) -> None:
     path = tmp_path / "state.vscdb"
     _write_cursor_db(
@@ -231,5 +287,84 @@ def test_update_replaces_all_sessions_of_a_changed_multi_session_file(tmp_path: 
         assert retriever.search("gamma question", limit=5)[0].session_id == "cursor:c1"
         # The dropped chat's session went with it — no orphan documents.
         assert retriever.search("beta question", limit=5) == []
+    finally:
+        store.close()
+
+
+def test_opencode_build_and_update_replace_every_database_session(tmp_path: Path) -> None:
+    path = tmp_path / "opencode.db"
+    _write_opencode_db(path, [("s1", "alpha opencode"), ("s2", "beta opencode")])
+    store = SqliteStore(tmp_path / "thimiko.sqlite")
+    try:
+        indexer = Indexer(store)
+        built = indexer.build([path], forced_source="opencode")
+        assert (built.sessions, built.documents) == (2, 2)
+
+        path.unlink()
+        _write_opencode_db(path, [("s1", "gamma opencode")])
+        updated = indexer.update([path], forced_source="opencode")
+        assert (updated.added, updated.updated, updated.skipped) == (0, 1, 0)
+
+        retriever = KeywordRetriever(store)
+        assert retriever.search("gamma opencode", limit=5)[0].session_id == "opencode:s1"
+        assert retriever.search("beta opencode", limit=5) == []
+    finally:
+        store.close()
+
+
+def test_opencode_wal_only_change_triggers_update(tmp_path: Path) -> None:
+    path = tmp_path / "opencode.db"
+    writer = sqlite3.connect(path)
+    store = SqliteStore(tmp_path / "thimiko.sqlite")
+    try:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        _create_opencode_schema(writer)
+        _insert_opencode_chat(writer, "s1", "m1", "first wal message", 1767225600000)
+        writer.commit()
+
+        source = OpenCodeSource()
+        indexer = Indexer(store)
+        before = source.fingerprint(path)
+        main_before = (path.stat().st_mtime_ns, path.stat().st_size)
+        indexer.build([path], forced_source="opencode")
+        assert store.file_state(str(path)) == before
+
+        _insert_opencode_chat(writer, "s1", "m2", "second wal message", 1767225601000)
+        writer.commit()
+        after = source.fingerprint(path)
+        main_after = (path.stat().st_mtime_ns, path.stat().st_size)
+
+        assert main_after == main_before
+        assert after != before
+        updated = indexer.update([path], forced_source="opencode")
+        assert (updated.added, updated.updated, updated.skipped) == (0, 1, 0)
+        assert store.file_state(str(path)) == after
+        assert len(KeywordRetriever(store).search("second wal message", limit=5)) == 1
+    finally:
+        store.close()
+        writer.close()
+
+
+def test_indexer_records_the_fingerprint_captured_before_parsing(tmp_path: Path) -> None:
+    path = tmp_path / "codex.jsonl"
+    write_jsonl(path, _codex_records("before parse", "answer"))
+
+    class MutatingCodexSource(CodexSource):
+        name = "mutating-codex"
+
+        def parse_all(self, source_path: Path) -> list[Session]:
+            sessions = super().parse_all(source_path)
+            with source_path.open("a", encoding="utf-8") as handle:
+                handle.write("not-json\n")
+            return sessions
+
+    source = MutatingCodexSource()
+    captured = source.fingerprint(path)
+    store = SqliteStore(tmp_path / "thimiko.sqlite")
+    try:
+        Indexer(store, [source]).build([path], forced_source=source.name)
+        assert store.file_state(str(path)) == captured
+        assert source.fingerprint(path) != captured
     finally:
         store.close()
